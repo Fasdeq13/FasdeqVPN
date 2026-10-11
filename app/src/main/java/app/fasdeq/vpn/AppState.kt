@@ -2,7 +2,10 @@ package app.fasdeq.vpn
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.net.TrafficStats
 import android.os.Build
+import android.os.Process
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -10,9 +13,6 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.wireguard.android.backend.GoBackend
-import com.wireguard.android.backend.Tunnel
-import com.wireguard.config.Config
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +24,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import kotlin.random.Random
 
 enum class Status { Off, Connecting, On, Stopping }
@@ -36,19 +35,16 @@ data class Server(
     val endpoint: String
 )
 
-private class WgTunnel(private val ifaceName: String) : Tunnel {
-    override fun getName(): String = ifaceName
-    override fun onStateChange(newState: Tunnel.State) {}
-}
-
-class AppState(app: Application) {
+class AppState(private val app: Application) {
     private val prefs = app.getSharedPreferences("fasdeq", Context.MODE_PRIVATE)
-    private val backend = GoBackend(app)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val tunnels = HashMap<String, WgTunnel>()
     private var pollJob: Job? = null
+    private var timeoutJob: Job? = null
     private var since = 0L
+    private var baseRx = 0L
+    private var baseTx = 0L
     private var activeId: String? = null
+    private var pendingId: String? = null
 
     val servers = mutableStateListOf<Server>()
     var selectedId by mutableStateOf<String?>(prefs.getString("selected", null))
@@ -99,21 +95,43 @@ class AppState(app: Application) {
         prefs.edit().putInt("accent", value).apply()
     }
 
-    fun addConfig(name: String, text: String): String? {
-        val conf = text.trim().replace("\r\n", "\n")
-        if (conf.isEmpty()) return "Конфигурация пустая"
-        try {
-            Config.parse(ByteArrayInputStream(conf.toByteArray()))
-        } catch (e: Exception) {
-            return "Неверная конфигурация: " + (e.message ?: "ошибка разбора")
+    suspend fun importText(text: String, nameHint: String = ""): String? {
+        val input = text.trim()
+        if (input.isEmpty()) return "Вставьте ссылку или конфигурацию"
+        val items = ArrayList<String>()
+        for (item in Links.extract(input)) {
+            if (item.startsWith("http://", true) || item.startsWith("https://", true)) {
+                val body = try {
+                    withContext(Dispatchers.IO) { Links.fetch(item) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    return "Не удалось загрузить список: " + (e.message ?: "ошибка сети")
+                }
+                items.addAll(Links.extract(Links.decodeSubscription(body)))
+            } else {
+                items.add(item)
+            }
         }
-        val endpoint = Regex("(?im)^\\s*Endpoint\\s*=\\s*(\\S+)").find(conf)?.groupValues?.get(1) ?: ""
-        val id = "fq" + Integer.toHexString(Random.nextInt(0x100000, 0xFFFFFF))
-        val title = name.trim().ifEmpty { "Сервер ${servers.size + 1}" }
-        servers.add(Server(id, title, conf, endpoint))
-        if (selectedId == null) selectedId = id
+        var added = 0
+        var failure: String? = null
+        for (item in items) {
+            try {
+                val parsed = Links.parse(item)
+                if (servers.none { it.conf == item }) {
+                    val hint = if (items.size == 1) nameHint else ""
+                    val title = hint.ifBlank { parsed.name }.ifBlank { "Сервер ${servers.size + 1}" }
+                    val id = "fq" + Integer.toHexString(Random.nextInt(0x100000, 0xFFFFFF))
+                    servers.add(Server(id, title, item, parsed.endpoint))
+                    if (selectedId == null) selectedId = id
+                }
+                added++
+            } catch (e: Exception) {
+                if (failure == null) failure = e.message ?: "Не удалось распознать"
+            }
+        }
         save()
-        return null
+        return if (added == 0) (failure ?: "Не удалось распознать") else null
     }
 
     fun remove(server: Server) {
@@ -142,96 +160,104 @@ class AppState(app: Application) {
     }
 
     fun disconnect() {
-        val id = activeId ?: return
         if (status != Status.On) return
         status = Status.Stopping
         pollJob?.cancel()
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    backend.setState(tunnel(id), Tunnel.State.DOWN, null)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                error = e.message ?: "Не удалось отключиться"
-            }
-            activeId = null
-            downSpeed = 0
-            upSpeed = 0
-            status = Status.Off
+        app.stopService(Intent(app, FasdeqVpnService::class.java))
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(3000)
+            if (status == Status.Stopping) finishDown(null)
         }
+    }
+
+    fun onCoreState(up: Boolean, message: String?) {
+        scope.launch {
+            timeoutJob?.cancel()
+            if (up) {
+                if (status == Status.Connecting) {
+                    activeId = pendingId
+                    since = SystemClock.elapsedRealtime()
+                    val uid = Process.myUid()
+                    baseRx = TrafficStats.getUidRxBytes(uid)
+                    baseTx = TrafficStats.getUidTxBytes(uid)
+                    rx = 0
+                    tx = 0
+                    downSpeed = 0
+                    upSpeed = 0
+                    uptime = 0
+                    status = Status.On
+                    startPolling()
+                }
+            } else {
+                finishDown(message)
+            }
+        }
+    }
+
+    private fun finishDown(message: String?) {
+        pollJob?.cancel()
+        activeId = null
+        downSpeed = 0
+        upSpeed = 0
+        rx = 0
+        tx = 0
+        uptime = 0
+        status = Status.Off
+        if (message != null) error = message
     }
 
     private fun launchSwitch(target: Server) {
+        val config = try {
+            Links.buildConfig(Links.parse(target.conf).outbound)
+        } catch (e: Exception) {
+            error = e.message ?: "Неверная конфигурация"
+            return
+        }
         error = null
         pollJob?.cancel()
+        pendingId = target.id
         status = Status.Connecting
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val old = activeId
-                    if (old != null) {
-                        try {
-                            backend.setState(tunnel(old), Tunnel.State.DOWN, null)
-                        } catch (e: Throwable) {
-                        }
-                        activeId = null
-                    }
-                    val cfg = Config.parse(ByteArrayInputStream(target.conf.toByteArray()))
-                    backend.setState(tunnel(target.id), Tunnel.State.UP, cfg)
-                }
-                activeId = target.id
-                since = SystemClock.elapsedRealtime()
-                rx = 0
-                tx = 0
-                downSpeed = 0
-                upSpeed = 0
-                uptime = 0
-                status = Status.On
-                startPolling(target.id)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                activeId = null
-                status = Status.Off
-                error = e.message ?: "Не удалось подключиться"
+        val intent = Intent(app, FasdeqVpnService::class.java)
+            .setAction(FasdeqVpnService.ACTION_START)
+            .putExtra(FasdeqVpnService.EXTRA_CONFIG, config)
+        try {
+            app.startService(intent)
+        } catch (e: Exception) {
+            status = Status.Off
+            error = e.message ?: "Не удалось запустить службу"
+            return
+        }
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(20000)
+            if (status == Status.Connecting && pendingId == target.id) {
+                app.stopService(Intent(app, FasdeqVpnService::class.java))
+                finishDown("Не удалось подключиться: истекло время ожидания")
             }
         }
     }
 
-    private fun startPolling(id: String) {
+    private fun startPolling() {
         pollJob?.cancel()
+        val uid = Process.myUid()
         pollJob = scope.launch {
-            var lastRx = -1L
+            var lastRx = 0L
             var lastTx = 0L
             while (isActive && status == Status.On) {
-                val stats = try {
-                    withContext(Dispatchers.IO) { backend.getStatistics(tunnel(id)) }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    null
-                }
-                if (stats != null) {
-                    val r = stats.totalRx()
-                    val t = stats.totalTx()
-                    if (lastRx >= 0) {
-                        downSpeed = maxOf(0L, r - lastRx)
-                        upSpeed = maxOf(0L, t - lastTx)
-                    }
-                    lastRx = r
-                    lastTx = t
-                    rx = r
-                    tx = t
-                }
+                val r = (TrafficStats.getUidRxBytes(uid) - baseRx).coerceAtLeast(0L)
+                val t = (TrafficStats.getUidTxBytes(uid) - baseTx).coerceAtLeast(0L)
+                downSpeed = (r - lastRx).coerceAtLeast(0L)
+                upSpeed = (t - lastTx).coerceAtLeast(0L)
+                lastRx = r
+                lastTx = t
+                rx = r
+                tx = t
                 uptime = (SystemClock.elapsedRealtime() - since) / 1000
                 delay(1000)
             }
         }
     }
-
-    private fun tunnel(id: String): WgTunnel = tunnels.getOrPut(id) { WgTunnel(id) }
 
     private fun load(): List<Server> {
         val raw = prefs.getString("servers", null) ?: return emptyList()

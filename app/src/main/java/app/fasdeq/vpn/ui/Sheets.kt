@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -37,6 +38,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,34 +53,55 @@ import androidx.compose.ui.unit.dp
 import app.fasdeq.vpn.AppState
 import app.fasdeq.vpn.R
 import app.fasdeq.vpn.displayName
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddServerSheet(state: AppState, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    var name by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+
+    fun submit(value: String) {
+        if (loading) return
+        scope.launch {
+            loading = true
+            error = null
+            val result = state.importText(value)
+            loading = false
+            if (result == null) onDismiss() else error = result
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        var failure: String? = null
-        var added = 0
-        uris.forEach { uri ->
-            val label = displayName(context, uri)
-            val content = try {
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
-            } catch (e: Exception) {
-                null
+        scope.launch {
+            loading = true
+            error = null
+            var failure: String? = null
+            for (uri in uris) {
+                val label = displayName(context, uri)
+                val content = withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                if (content == null) {
+                    failure = "Не удалось прочитать файл"
+                    continue
+                }
+                val result = state.importText(content, label)
+                if (result != null) failure = result
             }
-            if (content == null) {
-                failure = "Не удалось прочитать файл $label"
-            } else {
-                val result = state.addConfig(label, content)
-                if (result != null) failure = "$label: $result" else added++
-            }
+            loading = false
+            if (failure != null) error = failure else if (uris.isNotEmpty()) onDismiss()
         }
-        if (failure != null) error = failure else if (added > 0) onDismiss()
     }
 
     ModalBottomSheet(
@@ -96,23 +119,19 @@ fun AddServerSheet(state: AppState, onDismiss: () -> Unit) {
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Добавить сервер", style = MaterialTheme.typography.headlineSmall)
+            Text("Добавить конфигурацию", style = MaterialTheme.typography.headlineSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 FilledTonalButton(
-                    onClick = { picker.launch(arrayOf("*/*")) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                ) {
-                    Icon(painterResource(R.drawable.ic_file), null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Из файла")
-                }
-                FilledTonalButton(
                     onClick = {
-                        text = clipboard.getText()?.text ?: ""
-                        error = null
+                        val clip = clipboard.getText()?.text ?: ""
+                        if (clip.isBlank()) {
+                            error = "Буфер обмена пуст"
+                        } else {
+                            text = clip
+                            submit(clip)
+                        }
                     },
+                    enabled = !loading,
                     modifier = Modifier
                         .weight(1f)
                         .height(52.dp)
@@ -121,24 +140,28 @@ fun AddServerSheet(state: AppState, onDismiss: () -> Unit) {
                     Spacer(Modifier.width(8.dp))
                     Text("Из буфера")
                 }
+                FilledTonalButton(
+                    onClick = { picker.launch(arrayOf("*/*")) },
+                    enabled = !loading,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                ) {
+                    Icon(painterResource(R.drawable.ic_file), null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Из файла")
+                }
             }
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Название") },
-                singleLine = true,
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
             OutlinedTextField(
                 value = text,
                 onValueChange = {
                     text = it
                     error = null
                 },
-                label = { Text("Конфигурация WireGuard") },
-                minLines = 6,
-                maxLines = 10,
+                label = { Text("Ссылка или конфигурация") },
+                supportingText = { Text("Можно вставить сразу несколько ссылок или ссылку на список") },
+                minLines = 4,
+                maxLines = 8,
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -146,15 +169,21 @@ fun AddServerSheet(state: AppState, onDismiss: () -> Unit) {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
             Button(
-                onClick = {
-                    val result = state.addConfig(name, text)
-                    if (result == null) onDismiss() else error = result
-                },
+                onClick = { submit(text) },
+                enabled = !loading && text.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
             ) {
-                Text("Сохранить")
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 3.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text("Добавить")
+                }
             }
         }
     }
@@ -243,7 +272,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
             }
 
             Text(
-                "FasdeqVPN 1.0 · WireGuard",
+                "FasdeqVPN 1.0",
                 style = MaterialTheme.typography.labelMedium,
                 color = scheme.onSurfaceVariant
             )

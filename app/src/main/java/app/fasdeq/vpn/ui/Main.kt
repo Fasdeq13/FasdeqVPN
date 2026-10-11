@@ -211,7 +211,7 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelLarge,
                         textAlign = TextAlign.Center,
-                        maxLines = 2,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

@@ -210,7 +210,7 @@ fun ServerCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    if (active) "Подключено" else server.endpoint.ifEmpty { "WireGuard" },
+                    if (active) "Подключено" else server.endpoint.ifEmpty { "Сервер" },
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (active) scheme.primary else onContainer.copy(alpha = 0.7f),
                     maxLines = 1,
@@ -254,7 +254,7 @@ fun EmptyServers(onAdd: () -> Unit) {
         Spacer(Modifier.size(4.dp))
         Text("Серверов пока нет", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Импортируйте WireGuard-конфиг из файла .conf или вставьте его из буфера обмена",
+            "Вставьте ссылку или конфигурацию из буфера обмена, и всё готово",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -263,7 +263,7 @@ fun EmptyServers(onAdd: () -> Unit) {
         androidx.compose.material3.Button(onClick = onAdd) {
             Icon(painterResource(R.drawable.ic_add), null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Добавить сервер")
+            Text("Добавить")
         }
     }
 }

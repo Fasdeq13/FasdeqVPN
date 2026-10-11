@@ -1,0 +1,403 @@
+package app.fasdeq.vpn
+
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLDecoder
+import java.util.Base64
+
+data class Parsed(val name: String, val endpoint: String, val outbound: JSONObject)
+
+object Links {
+
+    fun extract(text: String): List<String> {
+        val t = text.trim().removePrefix("﻿")
+        if (t.contains("[Interface]", ignoreCase = true)) return listOf(t)
+        return t.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    fun parse(raw: String): Parsed {
+        val text = raw.trim()
+        if (text.contains("[Interface]", ignoreCase = true)) return parseInterface(text)
+        val end = text.indexOf("://")
+        require(end > 0) { "Не удалось распознать ссылку" }
+        return when (text.substring(0, end).lowercase()) {
+            "vless" -> parseVless(text)
+            "vmess" -> parseVmess(text)
+            "trojan" -> parseTrojan(text)
+            "ss" -> parseSs(text)
+            else -> throw IllegalArgumentException("Неподдерживаемый формат ссылки")
+        }
+    }
+
+    fun buildConfig(outbound: JSONObject): String {
+        val tun = JSONObject()
+            .put("tag", "tun")
+            .put("protocol", "tun")
+            .put("settings", JSONObject().put("name", "xray0").put("mtu", 1500))
+        outbound.put("tag", "proxy")
+        val root = JSONObject()
+            .put("log", JSONObject().put("loglevel", "warning"))
+            .put("inbounds", JSONArray().put(tun))
+            .put(
+                "outbounds",
+                JSONArray()
+                    .put(outbound)
+                    .put(JSONObject().put("tag", "direct").put("protocol", "freedom"))
+                    .put(JSONObject().put("tag", "block").put("protocol", "blackhole"))
+            )
+        return root.toString()
+    }
+
+    fun fetch(url: String): String {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.connectTimeout = 10000
+        c.readTimeout = 15000
+        c.setRequestProperty("User-Agent", "FasdeqVPN/1.0")
+        try {
+            require(c.responseCode in 200..299) { "HTTP ${c.responseCode}" }
+            return c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    fun decodeSubscription(body: String): String {
+        val t = body.trim()
+        if (t.contains("://")) return t
+        return try {
+            String(b64(t), Charsets.UTF_8)
+        } catch (e: Exception) {
+            t
+        }
+    }
+
+    private class Link(
+        val userInfo: String,
+        val host: String,
+        val port: Int,
+        val params: Map<String, String>,
+        val fragment: String
+    )
+
+    private fun decode(s: String): String = try {
+        URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+    } catch (e: Exception) {
+        s
+    }
+
+    private fun b64(s: String): ByteArray {
+        val n = s.replace("\\s".toRegex(), "").replace('-', '+').replace('_', '/')
+        return try {
+            Base64.getDecoder().decode(n)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Неверный формат ссылки")
+        }
+    }
+
+    private fun hostPort(value: String): Pair<String, Int> {
+        val hp = value.trimEnd('/')
+        val host: String
+        val port: Int
+        if (hp.startsWith("[")) {
+            val e = hp.indexOf(']')
+            require(e > 0) { "Неверный адрес сервера" }
+            host = hp.substring(1, e)
+            port = hp.substring(e + 1).removePrefix(":").toIntOrNull() ?: 443
+        } else {
+            val c = hp.lastIndexOf(':')
+            require(c > 0) { "В ссылке нет порта" }
+            host = hp.substring(0, c)
+            port = hp.substring(c + 1).toIntOrNull() ?: throw IllegalArgumentException("Неверный порт")
+        }
+        require(host.isNotEmpty() && port in 1..65535) { "Неверный адрес сервера" }
+        return Pair(host, port)
+    }
+
+    private fun split(text: String): Link {
+        var rest = text.substring(text.indexOf("://") + 3)
+        var fragment = ""
+        val hash = rest.indexOf('#')
+        if (hash >= 0) {
+            fragment = decode(rest.substring(hash + 1))
+            rest = rest.substring(0, hash)
+        }
+        var query = ""
+        val q = rest.indexOf('?')
+        if (q >= 0) {
+            query = rest.substring(q + 1)
+            rest = rest.substring(0, q)
+        }
+        val at = rest.lastIndexOf('@')
+        val userInfo = if (at >= 0) rest.substring(0, at) else ""
+        val hp = hostPort(if (at >= 0) rest.substring(at + 1) else rest)
+        val params = HashMap<String, String>()
+        query.split('&').forEach { pair ->
+            val i = pair.indexOf('=')
+            if (i > 0) params[pair.substring(0, i)] = decode(pair.substring(i + 1))
+        }
+        return Link(userInfo, hp.first, hp.second, params, fragment)
+    }
+
+    private fun list(value: String): List<String> =
+        value.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    private fun stream(p: Map<String, String>, host: String, forceTls: Boolean = false): JSONObject {
+        var net = (p["type"] ?: "tcp").lowercase().ifEmpty { "tcp" }
+        if (net == "h2") net = "http"
+        if (net == "splithttp") net = "xhttp"
+        val sec = (p["security"] ?: if (forceTls) "tls" else "none").lowercase().ifEmpty { "none" }
+        val s = JSONObject().put("network", net).put("security", sec)
+        val path = (p["path"] ?: "").ifEmpty { "/" }
+        val hostHeader = p["host"] ?: ""
+
+        when (net) {
+            "ws" -> {
+                val headers = JSONObject()
+                if (hostHeader.isNotEmpty()) headers.put("Host", hostHeader)
+                s.put("wsSettings", JSONObject().put("path", path).put("headers", headers))
+            }
+            "grpc" -> {
+                val name = p["serviceName"] ?: (p["path"] ?: "")
+                s.put(
+                    "grpcSettings",
+                    JSONObject().put("serviceName", name).put("multiMode", p["mode"] == "multi")
+                )
+            }
+            "http" -> s.put(
+                "httpSettings",
+                JSONObject().put("path", path).put("host", JSONArray(list(hostHeader)))
+            )
+            "httpupgrade" -> s.put(
+                "httpupgradeSettings",
+                JSONObject().put("path", path).put("host", hostHeader)
+            )
+            "xhttp" -> {
+                val x = JSONObject().put("path", path).put("host", hostHeader)
+                val mode = p["mode"]
+                if (!mode.isNullOrEmpty()) x.put("mode", mode)
+                val extra = p["extra"]
+                if (!extra.isNullOrEmpty()) {
+                    try {
+                        x.put("extra", JSONObject(extra))
+                    } catch (e: Exception) {
+                    }
+                }
+                s.put("xhttpSettings", x)
+            }
+            "kcp" -> {
+                val k = JSONObject().put("header", JSONObject().put("type", p["headerType"] ?: "none"))
+                val seed = p["seed"]
+                if (!seed.isNullOrEmpty()) k.put("seed", seed)
+                s.put("kcpSettings", k)
+            }
+            "tcp" -> {
+                if (p["headerType"] == "http") {
+                    val request = JSONObject()
+                        .put("path", JSONArray().put(path))
+                        .put("headers", JSONObject().put("Host", JSONArray(list(hostHeader))))
+                    s.put(
+                        "tcpSettings",
+                        JSONObject().put("header", JSONObject().put("type", "http").put("request", request))
+                    )
+                }
+            }
+        }
+
+        val sni = (p["sni"] ?: "").ifEmpty { p["peer"] ?: "" }.ifEmpty { hostHeader }.ifEmpty { host }
+        val fp = p["fp"] ?: ""
+        if (sec == "tls") {
+            val t = JSONObject().put("serverName", sni)
+            if (fp.isNotEmpty()) t.put("fingerprint", fp)
+            val alpn = list(p["alpn"] ?: "")
+            if (alpn.isNotEmpty()) t.put("alpn", JSONArray(alpn))
+            val insecure = p["allowInsecure"] ?: p["insecure"] ?: "0"
+            if (insecure == "1" || insecure == "true") t.put("allowInsecure", true)
+            s.put("tlsSettings", t)
+        } else if (sec == "reality") {
+            val key = p["pbk"] ?: ""
+            require(key.isNotEmpty()) { "В ссылке нет публичного ключа" }
+            s.put(
+                "realitySettings",
+                JSONObject()
+                    .put("serverName", sni)
+                    .put("fingerprint", fp.ifEmpty { "chrome" })
+                    .put("publicKey", key)
+                    .put("shortId", p["sid"] ?: "")
+                    .put("spiderX", p["spx"] ?: "")
+            )
+        }
+        return s
+    }
+
+    private fun parseVless(text: String): Parsed {
+        val l = split(text)
+        val id = decode(l.userInfo)
+        require(id.isNotEmpty()) { "В ссылке нет идентификатора" }
+        val user = JSONObject()
+            .put("id", id)
+            .put("encryption", (l.params["encryption"] ?: "none").ifEmpty { "none" })
+            .put("level", 0)
+        val flow = l.params["flow"] ?: ""
+        if (flow.isNotEmpty()) user.put("flow", flow)
+        val server = JSONObject()
+            .put("address", l.host)
+            .put("port", l.port)
+            .put("users", JSONArray().put(user))
+        val out = JSONObject()
+            .put("protocol", "vless")
+            .put("settings", JSONObject().put("vnext", JSONArray().put(server)))
+            .put("streamSettings", stream(l.params, l.host))
+        return Parsed(l.fragment.ifEmpty { l.host }, "${l.host}:${l.port}", out)
+    }
+
+    private fun parseTrojan(text: String): Parsed {
+        val l = split(text)
+        val password = decode(l.userInfo)
+        require(password.isNotEmpty()) { "В ссылке нет пароля" }
+        val server = JSONObject()
+            .put("address", l.host)
+            .put("port", l.port)
+            .put("password", password)
+            .put("level", 0)
+        val out = JSONObject()
+            .put("protocol", "trojan")
+            .put("settings", JSONObject().put("servers", JSONArray().put(server)))
+            .put("streamSettings", stream(l.params, l.host, forceTls = true))
+        return Parsed(l.fragment.ifEmpty { l.host }, "${l.host}:${l.port}", out)
+    }
+
+    private fun parseVmess(text: String): Parsed {
+        val body = text.substring(8).substringBefore('#').trim()
+        val json = try {
+            JSONObject(String(b64(body), Charsets.UTF_8))
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Неверная ссылка")
+        }
+        val host = json.optString("add")
+        val port = json.optString("port").toIntOrNull() ?: 0
+        val id = json.optString("id")
+        require(host.isNotEmpty() && port in 1..65535 && id.isNotEmpty()) { "В ссылке не хватает данных" }
+        val net = json.optString("net").ifEmpty { "tcp" }
+        val p = HashMap<String, String>()
+        p["type"] = net
+        p["headerType"] = json.optString("type")
+        p["host"] = json.optString("host")
+        p["path"] = json.optString("path")
+        if (net == "grpc") {
+            p["serviceName"] = json.optString("path")
+            p["mode"] = json.optString("type")
+        }
+        p["security"] = if (json.optString("tls").lowercase() == "tls") "tls" else "none"
+        p["sni"] = json.optString("sni")
+        p["fp"] = json.optString("fp")
+        p["alpn"] = json.optString("alpn")
+        val user = JSONObject()
+            .put("id", id)
+            .put("alterId", json.optString("aid").toIntOrNull() ?: 0)
+            .put("security", json.optString("scy").ifEmpty { "auto" })
+            .put("level", 0)
+        val server = JSONObject()
+            .put("address", host)
+            .put("port", port)
+            .put("users", JSONArray().put(user))
+        val out = JSONObject()
+            .put("protocol", "vmess")
+            .put("settings", JSONObject().put("vnext", JSONArray().put(server)))
+            .put("streamSettings", stream(p, host))
+        return Parsed(json.optString("ps").ifEmpty { host }, "$host:$port", out)
+    }
+
+    private fun parseSs(text: String): Parsed {
+        var rest = text.substring(5)
+        var name = ""
+        val hash = rest.indexOf('#')
+        if (hash >= 0) {
+            name = decode(rest.substring(hash + 1))
+            rest = rest.substring(0, hash)
+        }
+        val q = rest.indexOf('?')
+        if (q >= 0) {
+            require(!rest.substring(q + 1).contains("plugin=")) { "Плагины в ссылках не поддерживаются" }
+            rest = rest.substring(0, q)
+        }
+        rest = rest.trimEnd('/')
+        val cred: String
+        val target: String
+        val at = rest.lastIndexOf('@')
+        if (at >= 0) {
+            val ui = rest.substring(0, at)
+            cred = if (ui.contains(':')) decode(ui) else String(b64(decode(ui)), Charsets.UTF_8)
+            target = rest.substring(at + 1)
+        } else {
+            val plain = String(b64(rest), Charsets.UTF_8)
+            val i = plain.lastIndexOf('@')
+            require(i > 0) { "Неверная ссылка" }
+            cred = plain.substring(0, i)
+            target = plain.substring(i + 1)
+        }
+        val c = cred.indexOf(':')
+        require(c > 0) { "Неверная ссылка" }
+        val hp = hostPort(target)
+        val server = JSONObject()
+            .put("address", hp.first)
+            .put("port", hp.second)
+            .put("method", cred.substring(0, c))
+            .put("password", cred.substring(c + 1))
+            .put("level", 0)
+        val out = JSONObject()
+            .put("protocol", "shadowsocks")
+            .put("settings", JSONObject().put("servers", JSONArray().put(server)))
+        return Parsed(name.ifEmpty { hp.first }, "${hp.first}:${hp.second}", out)
+    }
+
+    private fun parseInterface(text: String): Parsed {
+        var section = ""
+        val iface = HashMap<String, String>()
+        val peers = ArrayList<HashMap<String, String>>()
+        for (line in text.lines()) {
+            val t = line.substringBefore('#').trim()
+            if (t.isEmpty()) continue
+            if (t.startsWith("[")) {
+                section = t.lowercase()
+                if (section == "[peer]") peers.add(HashMap())
+                continue
+            }
+            val i = t.indexOf('=')
+            if (i <= 0) continue
+            val k = t.substring(0, i).trim().lowercase()
+            val v = t.substring(i + 1).trim()
+            if (section == "[interface]") iface[k] = v
+            else if (section == "[peer]") peers.last()[k] = v
+        }
+        val key = iface["privatekey"] ?: ""
+        require(key.isNotEmpty()) { "В конфигурации нет приватного ключа" }
+        val addresses = list(iface["address"] ?: "")
+        require(addresses.isNotEmpty()) { "В конфигурации нет адреса" }
+        require(peers.isNotEmpty()) { "В конфигурации нет сервера" }
+        val peerArray = JSONArray()
+        var endpoint = ""
+        for (p in peers) {
+            val pub = p["publickey"] ?: ""
+            val ep = p["endpoint"] ?: ""
+            require(pub.isNotEmpty() && ep.isNotEmpty()) { "В конфигурации не хватает данных сервера" }
+            if (endpoint.isEmpty()) endpoint = ep
+            val o = JSONObject().put("publicKey", pub).put("endpoint", ep)
+            val psk = p["presharedkey"] ?: ""
+            if (psk.isNotEmpty()) o.put("preSharedKey", psk)
+            o.put("keepAlive", p["persistentkeepalive"]?.toIntOrNull() ?: 0)
+            val allowed = list(p["allowedips"] ?: "").ifEmpty { listOf("0.0.0.0/0", "::/0") }
+            o.put("allowedIPs", JSONArray(allowed))
+            peerArray.put(o)
+        }
+        val settings = JSONObject()
+            .put("secretKey", key)
+            .put("address", JSONArray(addresses))
+            .put("peers", peerArray)
+            .put("mtu", iface["mtu"]?.toIntOrNull() ?: 1280)
+            .put("noKernelTun", true)
+        val out = JSONObject().put("protocol", "wireguard").put("settings", settings)
+        return Parsed("", endpoint, out)
+    }
+}

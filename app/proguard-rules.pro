@@ -1,3 +1,4 @@
--keep class com.wireguard.** { *; }
--dontwarn com.wireguard.**
+-keep class libv2ray.** { *; }
+-keep class go.** { *; }
+-dontwarn go.**
 -keepclassmembers class * extends android.net.VpnService { *; }
