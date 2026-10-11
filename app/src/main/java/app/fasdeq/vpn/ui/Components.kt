@@ -1,6 +1,12 @@
 package app.fasdeq.vpn.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
@@ -11,6 +17,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,7 +39,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,10 +51,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.unit.dp
 import app.fasdeq.vpn.R
 import app.fasdeq.vpn.Server
 import app.fasdeq.vpn.Status
+import kotlinx.coroutines.delay
 
 @Composable
 fun PowerButton(status: Status, onClick: () -> Unit) {
@@ -50,18 +65,37 @@ fun PowerButton(status: Status, onClick: () -> Unit) {
     val busy = status == Status.Connecting || status == Status.Stopping
     val container by animateColorAsState(
         if (on) scheme.primary else scheme.secondaryContainer,
-        tween(450),
+        tween(500),
         label = "container"
     )
     val content by animateColorAsState(
         if (on) scheme.onPrimary else scheme.onSecondaryContainer,
-        tween(450),
+        tween(500),
         label = "content"
     )
     val corner by animateFloatAsState(
-        if (on || busy) 84f else 56f,
-        spring(dampingRatio = 0.55f, stiffness = 180f),
+        if (on) 84f else if (busy) 72f else 56f,
+        spring(dampingRatio = 0.5f, stiffness = 160f),
         label = "corner"
+    )
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val press by animateFloatAsState(
+        if (pressed) 0.9f else 1f,
+        spring(dampingRatio = 0.45f, stiffness = 400f),
+        label = "press"
+    )
+    val rest by animateFloatAsState(
+        if (on) 1f else 0.95f,
+        spring(dampingRatio = 0.5f, stiffness = 120f),
+        label = "rest"
+    )
+    val busyAmount by animateFloatAsState(if (busy) 1f else 0f, tween(350), label = "busyAmount")
+    val ringAmount by animateFloatAsState(if (on) 1f else 0f, tween(700), label = "ringAmount")
+    val iconScale by animateFloatAsState(
+        if (busy) 0.8f else 1f,
+        spring(dampingRatio = 0.4f, stiffness = 220f),
+        label = "iconScale"
     )
     val transition = rememberInfiniteTransition(label = "pulse")
     val first = transition.animateFloat(
@@ -80,10 +114,16 @@ fun PowerButton(status: Status, onClick: () -> Unit) {
         ),
         label = "second"
     )
+    val breath = transition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
+        label = "breath"
+    )
     val ringColor = scheme.primary
 
     Box(Modifier.size(248.dp), contentAlignment = Alignment.Center) {
-        if (on) {
+        if (ringAmount > 0.01f) {
             listOf(first, second).forEach { progress ->
                 Box(
                     Modifier
@@ -92,13 +132,17 @@ fun PowerButton(status: Status, onClick: () -> Unit) {
                             val s = 1f + 0.45f * progress.value
                             scaleX = s
                             scaleY = s
-                            alpha = (1f - progress.value) * 0.35f
+                            alpha = (1f - progress.value) * 0.35f * ringAmount
                         }
                         .background(ringColor, CircleShape)
                 )
             }
         }
-        if (busy) {
+        AnimatedVisibility(
+            visible = busy,
+            enter = fadeIn(tween(300)) + scaleIn(tween(300), initialScale = 0.8f),
+            exit = fadeOut(tween(250)) + scaleOut(tween(250), targetScale = 0.8f)
+        ) {
             CircularProgressIndicator(
                 modifier = Modifier.size(206.dp),
                 strokeWidth = 6.dp,
@@ -108,17 +152,29 @@ fun PowerButton(status: Status, onClick: () -> Unit) {
         Surface(
             onClick = onClick,
             enabled = !busy,
+            interactionSource = interaction,
             shape = RoundedCornerShape(corner.dp),
             color = container,
             contentColor = content,
             shadowElevation = if (on) 10.dp else 0.dp,
-            modifier = Modifier.size(168.dp)
+            modifier = Modifier
+                .size(168.dp)
+                .graphicsLayer {
+                    val s = lerp(rest, breath.value, busyAmount) * press
+                    scaleX = s
+                    scaleY = s
+                }
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
                     painter = painterResource(R.drawable.ic_power),
                     contentDescription = null,
-                    modifier = Modifier.size(76.dp)
+                    modifier = Modifier
+                        .size(76.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        }
                 )
             }
         }
@@ -151,9 +207,22 @@ fun ServerCard(
     selected: Boolean,
     active: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.97f else 1f,
+        spring(dampingRatio = 0.5f, stiffness = 500f),
+        label = "cardPress"
+    )
+    val radius by animateDpAsState(
+        if (selected) 36.dp else 24.dp,
+        spring(dampingRatio = 0.55f, stiffness = 300f),
+        label = "cardRadius"
+    )
     val container by animateColorAsState(
         if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh,
         tween(300),
@@ -176,12 +245,17 @@ fun ServerCard(
     )
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(28.dp),
+        interactionSource = interaction,
+        shape = RoundedCornerShape(radius),
         color = container,
         contentColor = onContainer,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
     ) {
         Row(
             Modifier.padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 6.dp),
@@ -266,4 +340,23 @@ fun EmptyServers(onAdd: () -> Unit) {
             Text("Добавить")
         }
     }
+}
+
+@Composable
+fun BurnInGuard(enabled: Boolean, content: @Composable () -> Unit) {
+    val steps = remember { listOf(0 to 0, 6 to 4, -6 to 6, -4 to -5, 5 to -6) }
+    var index by remember { mutableIntStateOf(0) }
+    LaunchedEffect(enabled) {
+        if (enabled) {
+            while (true) {
+                delay(60_000)
+                index = (index + 1) % steps.size
+            }
+        } else {
+            index = 0
+        }
+    }
+    val x by animateDpAsState(steps[index].first.dp, tween(4000), label = "burnX")
+    val y by animateDpAsState(steps[index].second.dp, tween(4000), label = "burnY")
+    Box(Modifier.fillMaxSize().offset(x, y)) { content() }
 }

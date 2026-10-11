@@ -1,12 +1,17 @@
 package app.fasdeq.vpn
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.TrafficStats
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
+import android.service.quicksettings.TileService
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -55,6 +60,12 @@ class AppState(private val app: Application) {
         private set
     var accent by mutableIntStateOf(prefs.getInt("accent", 0))
         private set
+    var burnIn by mutableStateOf(prefs.getBoolean("burnin", false))
+        private set
+    var palette by mutableIntStateOf(prefs.getInt("palette", 0))
+        private set
+    var amoled by mutableStateOf(prefs.getBoolean("amoled", false))
+        private set
     var status by mutableStateOf(Status.Off)
         private set
     var error by mutableStateOf<String?>(null)
@@ -75,9 +86,43 @@ class AppState(private val app: Application) {
     val activeServerId: String?
         get() = if (status == Status.On) activeId else null
 
+    private val receiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            onCoreState(intent.getBooleanExtra("up", false), intent.getStringExtra("msg"))
+        }
+    }
+
     init {
         servers.addAll(load())
         if (servers.none { it.id == selectedId }) selectedId = servers.firstOrNull()?.id
+        ContextCompat.registerReceiver(
+            app,
+            receiver,
+            IntentFilter(VpnBridge.ACTION_STATE),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        syncExternal()
+    }
+
+    fun syncExternal() {
+        val saved = VpnBridge.read(app)
+        val live = saved.first && VpnBridge.live(app)
+        if (live && status == Status.Off) {
+            pendingId = saved.second ?: selectedId
+            goUp()
+        } else if (!live && status == Status.On) {
+            finishDown(null)
+        }
+    }
+
+    fun changePalette(value: Int) {
+        palette = value
+        prefs.edit().putInt("palette", value).apply()
+    }
+
+    fun changeAmoled(value: Boolean) {
+        amoled = value
+        prefs.edit().putBoolean("amoled", value).apply()
     }
 
     fun setTheme(value: Int) {
@@ -88,6 +133,19 @@ class AppState(private val app: Application) {
     fun setDynamic(value: Boolean) {
         dynamicColors = value
         prefs.edit().putBoolean("dynamic", value).apply()
+    }
+
+    fun changeBurnIn(value: Boolean) {
+        burnIn = value
+        prefs.edit().putBoolean("burnin", value).apply()
+    }
+
+    private fun update(value: Status) {
+        status = value
+        try {
+            TileService.requestListeningState(app, ComponentName(app, FasdeqTileService::class.java))
+        } catch (e: Throwable) {
+        }
     }
 
     fun applyAccent(value: Int) {
@@ -160,39 +218,44 @@ class AppState(private val app: Application) {
     }
 
     fun disconnect() {
-        if (status != Status.On) return
-        status = Status.Stopping
+        if (status != Status.On && status != Status.Connecting) return
+        update(Status.Stopping)
         pollJob?.cancel()
         app.stopService(Intent(app, FasdeqVpnService::class.java))
         timeoutJob?.cancel()
         timeoutJob = scope.launch {
-            delay(3000)
+            delay(6000)
             if (status == Status.Stopping) finishDown(null)
         }
     }
 
     fun onCoreState(up: Boolean, message: String?) {
         scope.launch {
-            timeoutJob?.cancel()
             if (up) {
-                if (status == Status.Connecting) {
-                    activeId = pendingId
-                    since = SystemClock.elapsedRealtime()
-                    val uid = Process.myUid()
-                    baseRx = TrafficStats.getUidRxBytes(uid)
-                    baseTx = TrafficStats.getUidTxBytes(uid)
-                    rx = 0
-                    tx = 0
-                    downSpeed = 0
-                    upSpeed = 0
-                    uptime = 0
-                    status = Status.On
-                    startPolling()
+                if (status == Status.Connecting || status == Status.Off) {
+                    timeoutJob?.cancel()
+                    goUp()
                 }
             } else {
+                timeoutJob?.cancel()
                 finishDown(message)
             }
         }
+    }
+
+    private fun goUp() {
+        activeId = pendingId ?: selectedId
+        since = SystemClock.elapsedRealtime()
+        val uid = Process.myUid()
+        baseRx = TrafficStats.getUidRxBytes(uid)
+        baseTx = TrafficStats.getUidTxBytes(uid)
+        rx = 0
+        tx = 0
+        downSpeed = 0
+        upSpeed = 0
+        uptime = 0
+        update(Status.On)
+        startPolling()
     }
 
     private fun finishDown(message: String?) {
@@ -203,7 +266,7 @@ class AppState(private val app: Application) {
         rx = 0
         tx = 0
         uptime = 0
-        status = Status.Off
+        update(Status.Off)
         if (message != null) error = message
     }
 
@@ -217,14 +280,16 @@ class AppState(private val app: Application) {
         error = null
         pollJob?.cancel()
         pendingId = target.id
-        status = Status.Connecting
+        update(Status.Connecting)
         val intent = Intent(app, FasdeqVpnService::class.java)
             .setAction(FasdeqVpnService.ACTION_START)
             .putExtra(FasdeqVpnService.EXTRA_CONFIG, config)
+            .putExtra(FasdeqVpnService.EXTRA_NAME, target.name)
+            .putExtra(FasdeqVpnService.EXTRA_ID, target.id)
         try {
-            app.startService(intent)
+            ContextCompat.startForegroundService(app, intent)
         } catch (e: Exception) {
-            status = Status.Off
+            update(Status.Off)
             error = e.message ?: "Не удалось запустить службу"
             return
         }

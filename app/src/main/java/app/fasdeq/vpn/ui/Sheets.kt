@@ -1,8 +1,20 @@
 package app.fasdeq.vpn.ui
 
+import android.Manifest
+import android.app.StatusBarManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.drawable.Icon as GraphicIcon
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,7 +44,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -50,7 +67,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import app.fasdeq.vpn.AppState
+import app.fasdeq.vpn.FasdeqTileService
 import app.fasdeq.vpn.R
 import app.fasdeq.vpn.displayName
 import kotlinx.coroutines.Dispatchers
@@ -189,13 +208,124 @@ fun AddServerSheet(state: AppState, onDismiss: () -> Unit) {
     }
 }
 
+@Composable
+private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = scheme.primary,
+            modifier = Modifier.padding(start = 12.dp)
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = scheme.surfaceContainerHigh
+        ) {
+            Column(Modifier.padding(vertical = 6.dp)) { content() }
+        }
+    }
+}
+
+@Composable
+private fun SettingItem(
+    icon: Int,
+    title: String,
+    subtitle: String,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(scheme.secondaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painterResource(icon),
+                null,
+                Modifier.size(22.dp),
+                tint = scheme.onSecondaryContainer
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant
+            )
+        }
+        if (trailing != null) {
+            Spacer(Modifier.width(10.dp))
+            trailing()
+        }
+    }
+}
+
+@Composable
+private fun StateSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onChange,
+        thumbContent = if (checked) {
+            { Icon(painterResource(R.drawable.ic_check), null, Modifier.size(SwitchDefaults.IconSize)) }
+        } else null
+    )
+}
+
+private fun requestTile(context: Context) {
+    if (Build.VERSION.SDK_INT < 33) return
+    try {
+        val manager = context.getSystemService(StatusBarManager::class.java)
+        manager.requestAddTileService(
+            ComponentName(context, FasdeqTileService::class.java),
+            "FasdeqVPN",
+            GraphicIcon.createWithResource(context, R.drawable.ic_power),
+            context.mainExecutor
+        ) { }
+    } catch (e: Throwable) {
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
     val dynamicSupported = Build.VERSION.SDK_INT >= 31
     val dynamicActive = dynamicSupported && state.dynamicColors
     val modes = listOf("Системная", "Светлая", "Тёмная")
+    val power = remember { context.getSystemService(PowerManager::class.java) }
+
+    fun notificationsGranted(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    fun batteryFree(): Boolean = power.isIgnoringBatteryOptimizations(context.packageName)
+
+    var notifications by remember { mutableStateOf(notificationsGranted()) }
+    var battery by remember { mutableStateOf(batteryFree()) }
+
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { notifications = notificationsGranted() }
+
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { battery = batteryFree() }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -207,75 +337,211 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp)
+                .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            Text("Оформление", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "Настройки",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(start = 4.dp)
+            )
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Тема", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    modes.forEachIndexed { index, label ->
-                        FilterChip(
-                            selected = state.themeMode == index,
-                            onClick = { state.setTheme(index) },
-                            label = { Text(label) },
-                            leadingIcon = if (state.themeMode == index) {
-                                { Icon(painterResource(R.drawable.ic_check), null, Modifier.size(18.dp)) }
-                            } else null
+            SettingsGroup("Оформление") {
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Тема", style = MaterialTheme.typography.titleMedium)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        modes.forEachIndexed { index, label ->
+                            SegmentedButton(
+                                selected = state.themeMode == index,
+                                onClick = { state.setTheme(index) },
+                                shape = SegmentedButtonDefaults.itemShape(index, modes.size)
+                            ) { Text(label, maxLines = 1) }
+                        }
+                    }
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        scheme.primary,
+                        scheme.primaryContainer,
+                        scheme.secondary,
+                        scheme.secondaryContainer,
+                        scheme.tertiary,
+                        scheme.tertiaryContainer
+                    ).forEach { swatch ->
+                        val tone by animateColorAsState(swatch, tween(500), label = "tone")
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(tone)
                         )
                     }
                 }
-            }
-
-            if (dynamicSupported) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Цвета системы", style = MaterialTheme.typography.titleMedium)
+                if (dynamicSupported) {
+                    SettingItem(
+                        icon = R.drawable.ic_settings,
+                        title = "Цвета системы",
+                        subtitle = "Material You: палитра из обоев",
+                        onClick = { state.setDynamic(!state.dynamicColors) }
+                    ) { StateSwitch(state.dynamicColors) { state.setDynamic(it) } }
+                }
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Стиль палитры", style = MaterialTheme.typography.titleMedium)
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .alpha(if (dynamicActive) 0.38f else 1f)
+                    ) {
+                        Accents.styles.forEachIndexed { index, label ->
+                            SegmentedButton(
+                                selected = state.palette == index,
+                                onClick = { if (!dynamicActive) state.changePalette(index) },
+                                shape = SegmentedButtonDefaults.itemShape(index, Accents.styles.size)
+                            ) { Text(label, maxLines = 1) }
+                        }
+                    }
+                    Text("Акцентный цвет", style = MaterialTheme.typography.titleMedium)
+                    if (dynamicActive) {
                         Text(
-                            "Material You: палитра из обоев",
+                            "Недоступно, пока включены цвета системы",
                             style = MaterialTheme.typography.bodyMedium,
                             color = scheme.onSurfaceVariant
                         )
                     }
-                    Switch(checked = state.dynamicColors, onCheckedChange = { state.setDynamic(it) })
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Акцентный цвет", style = MaterialTheme.typography.titleMedium)
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.alpha(if (dynamicActive) 0.38f else 1f)
-                ) {
-                    items(Accents.names.indices.toList()) { index ->
-                        Box(
-                            Modifier
-                                .size(52.dp)
-                                .clip(CircleShape)
-                                .background(Accents.swatch(index))
-                                .clickable(enabled = !dynamicActive) { state.applyAccent(index) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (state.accent == index) {
-                                Icon(
-                                    painterResource(R.drawable.ic_check),
-                                    contentDescription = Accents.names[index],
-                                    tint = Color.White,
-                                    modifier = Modifier.size(26.dp)
-                                )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.alpha(if (dynamicActive) 0.38f else 1f)
+                    ) {
+                        items(Accents.names.indices.toList()) { index ->
+                            Box(
+                                Modifier
+                                    .size(52.dp)
+                                    .clip(CircleShape)
+                                    .background(Accents.swatch(index, state.palette))
+                                    .clickable(enabled = !dynamicActive) { state.applyAccent(index) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (state.accent == index) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_check),
+                                        contentDescription = Accents.names[index],
+                                        tint = Color.White,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            Text(
-                "FasdeqVPN 1.0",
-                style = MaterialTheme.typography.labelMedium,
-                color = scheme.onSurfaceVariant
-            )
+            SettingsGroup("Экран") {
+                SettingItem(
+                    icon = R.drawable.ic_screen,
+                    title = "Чёрный фон",
+                    subtitle = "Чистый чёрный в тёмной теме. Экономит заряд на OLED",
+                    onClick = { state.changeAmoled(!state.amoled) }
+                ) { StateSwitch(state.amoled) { state.changeAmoled(it) } }
+                SettingItem(
+                    icon = R.drawable.ic_screen,
+                    title = "Защита от выгорания",
+                    subtitle = "Интерфейс медленно смещается на несколько пикселей. Для OLED-экранов",
+                    onClick = { state.changeBurnIn(!state.burnIn) }
+                ) { StateSwitch(state.burnIn) { state.changeBurnIn(it) } }
+            }
+
+            SettingsGroup("Работа в фоне") {
+                SettingItem(
+                    icon = R.drawable.ic_tile,
+                    title = "Плитка в шторке",
+                    subtitle = if (Build.VERSION.SDK_INT >= 33) {
+                        "Быстрое включение и выключение из верхней шторки"
+                    } else {
+                        "Опустите шторку, нажмите карандаш и перетащите плитку FasdeqVPN"
+                    }
+                ) {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        FilledTonalButton(onClick = { requestTile(context) }) { Text("Добавить") }
+                    }
+                }
+                SettingItem(
+                    icon = R.drawable.ic_bell,
+                    title = "Уведомление",
+                    subtitle = if (notifications) {
+                        "Показывает состояние и кнопку отключения"
+                    } else {
+                        "Нужно разрешение, чтобы видеть состояние VPN"
+                    }
+                ) {
+                    if (notifications) {
+                        Icon(
+                            painterResource(R.drawable.ic_check),
+                            null,
+                            Modifier.size(24.dp),
+                            tint = scheme.primary
+                        )
+                    } else {
+                        FilledTonalButton(onClick = {
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        }) { Text("Разрешить") }
+                    }
+                }
+                SettingItem(
+                    icon = R.drawable.ic_battery,
+                    title = "Без ограничений батареи",
+                    subtitle = if (battery) {
+                        "Система не будет усыплять соединение"
+                    } else {
+                        "Рекомендуется, чтобы VPN не выгружался в фоне"
+                    }
+                ) {
+                    if (battery) {
+                        Icon(
+                            painterResource(R.drawable.ic_check),
+                            null,
+                            Modifier.size(24.dp),
+                            tint = scheme.primary
+                        )
+                    } else {
+                        FilledTonalButton(onClick = {
+                            try {
+                                batteryLauncher.launch(
+                                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                        .setData(Uri.parse("package:" + context.packageName))
+                                )
+                            } catch (e: Exception) {
+                                try {
+                                    batteryLauncher.launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                } catch (e2: Exception) {
+                                }
+                            }
+                        }) { Text("Выключить") }
+                    }
+                }
+            }
+
+            SettingsGroup("О приложении") {
+                SettingItem(
+                    icon = R.drawable.ic_info,
+                    title = "FasdeqVPN 1.2",
+                    subtitle = "VLESS, VMess, Trojan, Shadowsocks, WireGuard"
+                )
+            }
         }
     }
 }

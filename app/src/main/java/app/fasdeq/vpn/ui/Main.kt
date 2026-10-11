@@ -1,5 +1,18 @@
 package app.fasdeq.vpn.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,11 +62,13 @@ import app.fasdeq.vpn.Status
 import app.fasdeq.vpn.formatSpeed
 import app.fasdeq.vpn.formatTime
 
+private const val STATS = "\u0000stats"
+
 @Composable
 fun FasdeqRoot(state: AppState, onPower: () -> Unit) {
-    FasdeqTheme(state.themeMode, state.dynamicColors, state.accent) {
+    FasdeqTheme(state.themeMode, state.dynamicColors, state.accent, state.palette, state.amoled) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Home(state, onPower)
+            BurnInGuard(state.burnIn) { Home(state, onPower) }
         }
     }
 }
@@ -66,10 +81,17 @@ private fun Home(state: AppState, onPower: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+    val glow by animateFloatAsState(
+        if (state.status == Status.On) 0.22f else 0f,
+        tween(900),
+        label = "glow"
+    )
+
     Column(Modifier.fillMaxSize()) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(scheme.primary.copy(alpha = glow), Color.Transparent)))
                 .windowInsetsPadding(WindowInsets.statusBars),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -130,7 +152,8 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                 selected = server.id == state.selectedId,
                                 active = server.id == state.activeServerId,
                                 onClick = { state.select(server.id) },
-                                onDelete = { toDelete = server }
+                                onDelete = { toDelete = server },
+                                modifier = Modifier.animateItem()
                             )
                         }
                     }
@@ -177,11 +200,21 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         PowerButton(state.status, onPower)
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = if (on) scheme.primary else scheme.onSurface
+        val titleColor by animateColorAsState(
+            if (on) scheme.primary else scheme.onSurface,
+            tween(500),
+            label = "titleColor"
         )
+        AnimatedContent(
+            targetState = title,
+            transitionSpec = {
+                (fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 3 }) togetherWith
+                    (fadeOut(tween(200)) + slideOutVertically(tween(200)) { -it / 3 })
+            },
+            label = "title"
+        ) { value ->
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = titleColor)
+        }
         Text(
             state.selected?.name ?: "Сервер не выбран",
             style = MaterialTheme.typography.bodyLarge,
@@ -198,28 +231,38 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
                 .padding(horizontal = 16.dp),
             contentAlignment = Alignment.Center
         ) {
-            val err = state.error
-            if (err != null) {
-                Surface(
-                    onClick = { state.error = null },
-                    shape = RoundedCornerShape(20.dp),
-                    color = scheme.errorContainer,
-                    contentColor = scheme.onErrorContainer
-                ) {
-                    Text(
-                        err,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.labelLarge,
-                        textAlign = TextAlign.Center,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            } else if (on) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    StatPill(null, formatTime(state.uptime))
-                    StatPill(R.drawable.ic_arrow_down, formatSpeed(state.downSpeed))
-                    StatPill(R.drawable.ic_arrow_up, formatSpeed(state.upSpeed))
+            AnimatedContent(
+                targetState = state.error ?: if (on) STATS else null,
+                transitionSpec = {
+                    (fadeIn(tween(300)) + scaleIn(tween(300), initialScale = 0.9f)) togetherWith
+                        fadeOut(tween(200))
+                },
+                label = "info"
+            ) { value ->
+                if (value == null) {
+                    Spacer(Modifier.height(1.dp))
+                } else if (value == STATS) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StatPill(null, formatTime(state.uptime))
+                        StatPill(R.drawable.ic_arrow_down, formatSpeed(state.downSpeed))
+                        StatPill(R.drawable.ic_arrow_up, formatSpeed(state.upSpeed))
+                    }
+                } else {
+                    Surface(
+                        onClick = { state.error = null },
+                        shape = RoundedCornerShape(20.dp),
+                        color = scheme.errorContainer,
+                        contentColor = scheme.onErrorContainer
+                    ) {
+                        Text(
+                            value,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            textAlign = TextAlign.Center,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
