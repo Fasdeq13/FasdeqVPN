@@ -1,0 +1,3 @@
+-keep class com.wireguard.** { *; }
+-dontwarn com.wireguard.**
+-keepclassmembers class * extends android.net.VpnService { *; }
