@@ -367,8 +367,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                                 selected = state.themeMode == index,
                                 onClick = { state.setTheme(index) },
                                 shape = SegmentedButtonDefaults.itemShape(index, modes.size),
-                                icon = { },
-                                contentPadding = PaddingValues(horizontal = 4.dp)
+                                icon = { }
                             ) {
                                 Text(
                                     label,
@@ -427,8 +426,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                                 selected = state.palette == index,
                                 onClick = { if (!dynamicActive) state.changePalette(index) },
                                 shape = SegmentedButtonDefaults.itemShape(index, Accents.styles.size),
-                                icon = { },
-                                contentPadding = PaddingValues(horizontal = 4.dp)
+                                icon = { }
                             ) {
                                 Text(
                                     label,
