@@ -1,6 +1,7 @@
 package app.fasdeq.vpn
 
 import android.app.Application
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -227,10 +228,19 @@ class AppState(private val app: Application) {
         if (status != Status.On && status != Status.Connecting) return
         update(Status.Stopping)
         pollJob?.cancel()
-        app.stopService(Intent(app, FasdeqVpnService::class.java))
+        try {
+            PendingIntent.getService(
+                app,
+                2,
+                Intent(app, FasdeqVpnService::class.java).setAction(FasdeqVpnService.ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            ).send()
+        } catch (e: Throwable) {
+            app.stopService(Intent(app, FasdeqVpnService::class.java))
+        }
         timeoutJob?.cancel()
         timeoutJob = scope.launch {
-            delay(6000)
+            delay(2500)
             if (status == Status.Stopping) finishDown(null)
         }
     }

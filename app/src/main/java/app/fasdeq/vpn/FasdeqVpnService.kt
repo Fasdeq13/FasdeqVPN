@@ -239,34 +239,18 @@ class FasdeqVpnService : VpnService() {
             halted = true
         }
         val mine = epoch
+        stopping = true
+        prefs.edit().putBoolean(KEY_RUN, false).remove(KEY_CONFIG).commit()
+        VpnBridge.write(this, false, null)
+        VpnBridge.send(this, false, message)
+        releaseWake()
+        stopForegroundCompat()
         Thread {
-            synchronized(lock) {
-                stopping = true
-                val core = controller
-                controller = null
-                var worker: Thread? = null
-                if (core != null) {
-                    worker = Thread {
-                        try {
-                            core.stopLoop()
-                        } catch (e: Throwable) {
-                        }
-                    }
-                    worker.start()
-                    worker.join(800)
-                }
-                closeTun()
-                releaseWake()
-                prefs.edit().putBoolean(KEY_RUN, false).remove(KEY_CONFIG).commit()
-                VpnBridge.write(this, false, null)
-                VpnBridge.send(this, false, message)
-                if (mine == epoch) {
-                    stopForegroundCompat()
-                    stopSelf()
-                }
-                worker?.join(2200)
-                if (mine == epoch) Process.killProcess(Process.myPid())
+            try {
+                Thread.sleep(120)
+            } catch (e: Throwable) {
             }
+            if (mine == epoch) Process.killProcess(Process.myPid())
         }.start()
     }
 
