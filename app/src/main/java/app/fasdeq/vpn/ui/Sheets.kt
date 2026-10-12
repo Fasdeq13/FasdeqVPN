@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -66,6 +68,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.fasdeq.vpn.AppState
@@ -234,6 +237,7 @@ private fun SettingItem(
     title: String,
     subtitle: String,
     onClick: (() -> Unit)? = null,
+    below: Boolean = false,
     trailing: (@Composable () -> Unit)? = null
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -246,7 +250,7 @@ private fun SettingItem(
     ) {
         Box(
             Modifier
-                .size(44.dp)
+                .requiredSize(44.dp)
                 .clip(CircleShape)
                 .background(scheme.secondaryContainer),
             contentAlignment = Alignment.Center
@@ -254,7 +258,7 @@ private fun SettingItem(
             Icon(
                 painterResource(icon),
                 null,
-                Modifier.size(22.dp),
+                Modifier.requiredSize(22.dp),
                 tint = scheme.onSecondaryContainer
             )
         }
@@ -266,8 +270,12 @@ private fun SettingItem(
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant
             )
+            if (below && trailing != null) {
+                Spacer(Modifier.height(10.dp))
+                trailing()
+            }
         }
-        if (trailing != null) {
+        if (!below && trailing != null) {
             Spacer(Modifier.width(10.dp))
             trailing()
         }
@@ -358,8 +366,17 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                             SegmentedButton(
                                 selected = state.themeMode == index,
                                 onClick = { state.setTheme(index) },
-                                shape = SegmentedButtonDefaults.itemShape(index, modes.size)
-                            ) { Text(label, maxLines = 1) }
+                                shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                                icon = { },
+                                contentPadding = PaddingValues(horizontal = 4.dp)
+                            ) {
+                                Text(
+                                    label,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
                         }
                     }
                 }
@@ -409,8 +426,17 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                             SegmentedButton(
                                 selected = state.palette == index,
                                 onClick = { if (!dynamicActive) state.changePalette(index) },
-                                shape = SegmentedButtonDefaults.itemShape(index, Accents.styles.size)
-                            ) { Text(label, maxLines = 1) }
+                                shape = SegmentedButtonDefaults.itemShape(index, Accents.styles.size),
+                                icon = { },
+                                contentPadding = PaddingValues(horizontal = 4.dp)
+                            ) {
+                                Text(
+                                    label,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
                         }
                     }
                     Text("Акцентный цвет", style = MaterialTheme.typography.titleMedium)
@@ -467,6 +493,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 SettingItem(
                     icon = R.drawable.ic_tile,
                     title = "Плитка в шторке",
+                    below = true,
                     subtitle = if (Build.VERSION.SDK_INT >= 33) {
                         "Быстрое включение и выключение из верхней шторки"
                     } else {
@@ -480,6 +507,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 SettingItem(
                     icon = R.drawable.ic_bell,
                     title = "Уведомление",
+                    below = true,
                     subtitle = if (notifications) {
                         "Показывает состояние и кнопку отключения"
                     } else {
@@ -504,6 +532,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 SettingItem(
                     icon = R.drawable.ic_battery,
                     title = "Без ограничений батареи",
+                    below = true,
                     subtitle = if (battery) {
                         "Система не будет усыплять соединение"
                     } else {

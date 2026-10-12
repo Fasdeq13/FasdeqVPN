@@ -102,6 +102,12 @@ class AppState(private val app: Application) {
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         syncExternal()
+        scope.launch {
+            while (true) {
+                delay(1500)
+                syncExternal()
+            }
+        }
     }
 
     fun syncExternal() {

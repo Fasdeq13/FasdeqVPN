@@ -1,5 +1,6 @@
 package app.fasdeq.vpn
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -28,10 +29,22 @@ object VpnBridge {
     }
 
     fun live(context: Context): Boolean {
+        val running = try {
+            val am = context.getSystemService(ActivityManager::class.java)
+            @Suppress("DEPRECATION")
+            am.getRunningServices(Int.MAX_VALUE).any {
+                it.service.className == FasdeqVpnService::class.java.name
+            }
+        } catch (e: Throwable) {
+            false
+        }
+        if (running) return true
         return try {
             val cm = context.getSystemService(ConnectivityManager::class.java)
-            val net = cm.activeNetwork ?: return false
-            cm.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any {
+                cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
         } catch (e: Throwable) {
             false
         }

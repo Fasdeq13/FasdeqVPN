@@ -34,7 +34,7 @@ object Accents {
         45f, 22f, 355f, 320f, 200f,
         155f, 58f, 8f, 338f, 290f, 270f
     )
-    val styles = listOf("Стандарт", "Приглушённая", "Насыщенная")
+    val styles = listOf("Стандарт", "Мягкая", "Яркая")
     val factors = floatArrayOf(1f, 0.5f, 1.3f)
     fun swatch(index: Int, style: Int): Color =
         hsl(hues[index], (0.65f * factors[style.coerceIn(0, factors.size - 1)]).coerceIn(0f, 1f), 0.52f)
