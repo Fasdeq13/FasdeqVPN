@@ -2,8 +2,6 @@ package app.fasdeq.vpn.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.scaleOut
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -62,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUp
@@ -433,19 +432,25 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                     }
                 }
             }
-            AnimatedVisibility(
-                visible = !selecting,
-                enter = scaleIn(tween(Motion.d(300))) + fadeIn(tween(Motion.d(300))),
-                exit = scaleOut(tween(Motion.d(200))) + fadeOut(tween(Motion.d(200))),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 20.dp, bottom = navBottom + 20.dp)
-            ) {
+            val fabScale by animateFloatAsState(
+                if (selecting) 0f else 1f,
+                tween(Motion.d(300)),
+                label = "fab"
+            )
+            if (fabScale > 0.01f) {
                 ExtendedFloatingActionButton(
                     onClick = { showAdd = true },
                     expanded = listState.firstVisibleItemIndex == 0,
                     icon = { Icon(painterResource(R.drawable.ic_add), null, Modifier.size(22.dp)) },
-                    text = { Text("Добавить") }
+                    text = { Text("Добавить") },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp, bottom = navBottom + 20.dp)
+                        .graphicsLayer {
+                            scaleX = fabScale
+                            scaleY = fabScale
+                            alpha = fabScale
+                        }
                 )
             }
             }
