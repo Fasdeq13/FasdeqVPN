@@ -23,6 +23,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowCompat
 
+object Motion {
+    @Volatile var scale = 1f
+    val names = listOf("Минимум", "Быстро", "Обычно", "Плавно")
+    val factors = floatArrayOf(0.3f, 0.65f, 1f, 1.7f)
+    fun d(ms: Int): Int = (ms * scale).toInt().coerceAtLeast(1)
+    fun k(value: Float): Float = (value / (scale * scale)).coerceIn(15f, 30000f)
+}
+
 object Accents {
     val names = listOf(
         "Индиго", "Синий", "Бирюзовый", "Зелёный", "Лайм",
@@ -147,6 +155,23 @@ private val AppTypography = Typography().let {
     )
 }
 
+private fun ColorScheme.withContrast(level: Int, dark: Boolean): ColorScheme {
+    if (level <= 0) return this
+    val k = if (level == 1) 0.12f else 0.28f
+    val edge = if (dark) Color.White else Color.Black
+    return copy(
+        onSurface = lerp(onSurface, edge, k * 2f),
+        onSurfaceVariant = lerp(onSurfaceVariant, edge, k * 2f),
+        outline = lerp(outline, edge, k * 3f),
+        outlineVariant = lerp(outlineVariant, edge, k * 2f),
+        surfaceContainerHigh = lerp(surfaceContainerHigh, edge, k * 0.25f),
+        surfaceContainerHighest = lerp(surfaceContainerHighest, edge, k * 0.35f),
+        primaryContainer = lerp(primaryContainer, edge, k * 0.2f),
+        secondaryContainer = lerp(secondaryContainer, edge, k * 0.2f),
+        tertiaryContainer = lerp(tertiaryContainer, edge, k * 0.2f)
+    )
+}
+
 private fun ColorScheme.pureBlack(): ColorScheme = copy(
     background = Color.Black,
     surface = Color.Black,
@@ -165,8 +190,11 @@ fun FasdeqTheme(
     accent: Int,
     palette: Int,
     amoled: Boolean,
+    contrast: Int,
+    animSpeed: Int,
     content: @Composable () -> Unit
 ) {
+    Motion.scale = Motion.factors[animSpeed.coerceIn(0, Motion.factors.size - 1)]
     val dark = when (mode) {
         1 -> false
         2 -> true
@@ -180,7 +208,8 @@ fun FasdeqTheme(
         val k = Accents.factors[palette.coerceIn(0, Accents.factors.size - 1)]
         if (dark) darkScheme(hue, k) else lightScheme(hue, k)
     }
-    val scheme = if (dark && amoled) base.pureBlack() else base
+    val tinted = if (dark && amoled) base.pureBlack() else base
+    val scheme = tinted.withContrast(contrast, dark)
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

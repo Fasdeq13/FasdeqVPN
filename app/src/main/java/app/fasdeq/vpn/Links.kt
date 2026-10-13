@@ -3,11 +3,14 @@ package app.fasdeq.vpn
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URL
 import java.net.URLDecoder
 import java.util.Base64
 
 data class Parsed(val name: String, val endpoint: String, val outbound: JSONObject)
+
+class Fetched(val body: String, val group: String)
 
 object Links {
 
@@ -31,11 +34,11 @@ object Links {
         }
     }
 
-    fun buildConfig(outbound: JSONObject): String {
+    fun buildConfig(outbound: JSONObject, mtu: Int = 1500): String {
         val tun = JSONObject()
             .put("tag", "tun")
             .put("protocol", "tun")
-            .put("settings", JSONObject().put("name", "xray0").put("mtu", 1500))
+            .put("settings", JSONObject().put("name", "xray0").put("mtu", mtu))
         outbound.put("tag", "proxy")
         val root = JSONObject()
             .put("log", JSONObject().put("loglevel", "warning"))
@@ -50,14 +53,93 @@ object Links {
         return root.toString()
     }
 
-    fun fetch(url: String): String {
+    fun socksOutbound(port: Int): JSONObject = JSONObject()
+        .put("protocol", "socks")
+        .put(
+            "settings",
+            JSONObject().put(
+                "servers",
+                JSONArray().put(JSONObject().put("address", "127.0.0.1").put("port", port))
+            )
+        )
+
+    fun buildInner(outbound: JSONObject, port: Int): String {
+        outbound.put("tag", "proxy")
+        val inbound = JSONObject()
+            .put("tag", "in")
+            .put("listen", "127.0.0.1")
+            .put("port", port)
+            .put("protocol", "socks")
+            .put("settings", JSONObject().put("auth", "noauth").put("udp", true).put("ip", "127.0.0.1"))
+        val root = JSONObject()
+            .put("log", JSONObject().put("loglevel", "warning"))
+            .put("inbounds", JSONArray().put(inbound))
+            .put(
+                "outbounds",
+                JSONArray()
+                    .put(outbound)
+                    .put(JSONObject().put("tag", "direct").put("protocol", "freedom"))
+            )
+        return root.toString()
+    }
+
+    private fun ip(host: String): String = try {
+        InetAddress.getByName(host).hostAddress ?: host
+    } catch (e: Exception) {
+        host
+    }
+
+    fun resolve(outbound: JSONObject) {
+        val settings = outbound.optJSONObject("settings") ?: return
+        for (key in listOf("vnext", "servers")) {
+            val arr = settings.optJSONArray(key) ?: continue
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val host = o.optString("address")
+                if (host.isNotEmpty()) o.put("address", ip(host))
+            }
+        }
+        val peers = settings.optJSONArray("peers") ?: return
+        for (i in 0 until peers.length()) {
+            val p = peers.getJSONObject(i)
+            val ep = p.optString("endpoint")
+            if (ep.isEmpty()) continue
+            try {
+                val hp = hostPort(ep)
+                val addr = ip(hp.first)
+                p.put("endpoint", if (addr.contains(':')) "[" + addr + "]:" + hp.second else addr + ":" + hp.second)
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    fun fetchMeta(url: String): Fetched {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 10000
         c.readTimeout = 15000
         c.setRequestProperty("User-Agent", "FasdeqVPN/1.0")
         try {
             require(c.responseCode in 200..299) { "HTTP ${c.responseCode}" }
-            return c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            val body = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            var title = c.getHeaderField("profile-title") ?: ""
+            if (title.startsWith("base64:", true)) {
+                title = try {
+                    String(b64(title.substring(7)), Charsets.UTF_8)
+                } catch (e: Exception) {
+                    title.substring(7)
+                }
+            }
+            if (title.isBlank()) {
+                val cd = c.getHeaderField("content-disposition") ?: ""
+                val m = Regex("filename\\*?=(?:UTF-8'')?\"?([^\";]+)", RegexOption.IGNORE_CASE).find(cd)
+                if (m != null) title = decode(m.groupValues[1]).substringBeforeLast('.')
+            }
+            if (title.isBlank()) {
+                val m = Regex("(?im)^#\\s*profile-title\\s*:\\s*(.+)$").find(decodeSubscription(body))
+                if (m != null) title = m.groupValues[1].trim()
+            }
+            if (title.isBlank()) title = c.url.host ?: ""
+            return Fetched(body, decode(title).trim())
         } finally {
             c.disconnect()
         }

@@ -10,11 +10,12 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "app.fasdeq.vpn"
+        applicationId = (project.findProperty("app.id") as String?) ?: "app.fasdeq.vpn"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 5
+        versionName = "1.4"
+        manifestPlaceholders["appLabel"] = (project.findProperty("app.label") as String?) ?: "FasdeqVPN"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }

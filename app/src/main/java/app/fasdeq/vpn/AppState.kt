@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.net.TrafficStats
 import android.os.Build
 import android.os.Process
@@ -17,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellationException
@@ -26,10 +28,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import kotlin.random.Random
 
 enum class Status { Off, Connecting, On, Stopping }
@@ -38,8 +44,27 @@ data class Server(
     val id: String,
     val name: String,
     val conf: String,
-    val endpoint: String
+    val endpoint: String,
+    val group: String = ""
 )
+
+data class Group(val name: String, val url: String)
+
+object DnsPresets {
+    val names = listOf("Cloudflare", "Google", "Quad9", "AdGuard", "Свой")
+    val servers = listOf(
+        listOf("1.1.1.1", "1.0.0.1"),
+        listOf("8.8.8.8", "8.8.4.4"),
+        listOf("9.9.9.9", "149.112.112.112"),
+        listOf("94.140.14.14", "94.140.15.15")
+    )
+}
+
+object PingOptions {
+    val modes = listOf("Авто", "TCP", "UDP", "Оба", "ICMP")
+    val timeouts = listOf(2000, 4000, 8000)
+    val timeoutNames = listOf("2 с", "4 с", "8 с")
+}
 
 class AppState(private val app: Application) {
     private val prefs = app.getSharedPreferences("fasdeq", Context.MODE_PRIVATE)
@@ -53,6 +78,9 @@ class AppState(private val app: Application) {
     private var pendingId: String? = null
 
     val servers = mutableStateListOf<Server>()
+    val groups = mutableStateListOf<Group>()
+    val pings = mutableStateMapOf<String, PingResult>()
+    val cores = mutableStateListOf<CoreInfo>()
     var selectedId by mutableStateOf<String?>(prefs.getString("selected", null))
         private set
     var themeMode by mutableIntStateOf(prefs.getInt("theme", 0))
@@ -66,6 +94,36 @@ class AppState(private val app: Application) {
     var palette by mutableIntStateOf(prefs.getInt("palette", 0))
         private set
     var amoled by mutableStateOf(prefs.getBoolean("amoled", false))
+        private set
+    var pingMode by mutableIntStateOf(prefs.getInt("ping_mode", 0))
+        private set
+    var pingTimeout by mutableIntStateOf(prefs.getInt("ping_timeout", 1))
+        private set
+    var autoPing by mutableStateOf(prefs.getBoolean("auto_ping", false))
+        private set
+    var sortPing by mutableStateOf(prefs.getBoolean("sort_ping", false))
+        private set
+    var autoConnect by mutableStateOf(prefs.getBoolean("auto_connect", false))
+        private set
+    var dnsPreset by mutableIntStateOf(prefs.getInt("dns_preset", 0))
+        private set
+    var dnsCustom by mutableStateOf(prefs.getString("dns_custom", "") ?: "")
+        private set
+    var mtu by mutableIntStateOf(prefs.getInt("mtu", 1500))
+        private set
+    var launchStyle by mutableIntStateOf(prefs.getInt("launch_style", 0))
+        private set
+    var animSpeed by mutableIntStateOf(prefs.getInt("anim_speed", 2))
+        private set
+    var contrast by mutableIntStateOf(prefs.getInt("contrast", 0))
+        private set
+    var activeCore by mutableStateOf(Cores.active(app))
+        private set
+    var builtinVersion by mutableStateOf("")
+        private set
+    var coreBusy by mutableStateOf<String?>(null)
+        private set
+    var releases by mutableStateOf<List<Release>?>(null)
         private set
     var status by mutableStateOf(Status.Off)
         private set
@@ -95,7 +153,16 @@ class AppState(private val app: Application) {
 
     init {
         servers.addAll(load())
+        groups.addAll(loadGroups())
         if (servers.none { it.id == selectedId }) selectedId = servers.firstOrNull()?.id
+        refreshCores()
+        scope.launch { builtinVersion = withContext(Dispatchers.IO) { Cores.builtinVersion() } }
+        if (autoPing) {
+            scope.launch {
+                delay(500)
+                pingAll()
+            }
+        }
         ContextCompat.registerReceiver(
             app,
             receiver,
@@ -120,6 +187,69 @@ class AppState(private val app: Application) {
         } else if (!live && status == Status.On) {
             finishDown(null)
         }
+    }
+
+    fun changeLaunchStyle(value: Int) {
+        launchStyle = value
+        prefs.edit().putInt("launch_style", value).apply()
+    }
+
+    fun changeAnimSpeed(value: Int) {
+        animSpeed = value
+        prefs.edit().putInt("anim_speed", value).apply()
+    }
+
+    fun changeContrast(value: Int) {
+        contrast = value
+        prefs.edit().putInt("contrast", value).apply()
+    }
+
+    fun changePingMode(value: Int) {
+        pingMode = value
+        prefs.edit().putInt("ping_mode", value).apply()
+    }
+
+    fun changePingTimeout(value: Int) {
+        pingTimeout = value
+        prefs.edit().putInt("ping_timeout", value).apply()
+    }
+
+    fun changeAutoPing(value: Boolean) {
+        autoPing = value
+        prefs.edit().putBoolean("auto_ping", value).apply()
+    }
+
+    fun changeSortPing(value: Boolean) {
+        sortPing = value
+        prefs.edit().putBoolean("sort_ping", value).apply()
+    }
+
+    fun changeAutoConnect(value: Boolean) {
+        autoConnect = value
+        prefs.edit().putBoolean("auto_connect", value).apply()
+    }
+
+    fun changeDnsPreset(value: Int) {
+        dnsPreset = value
+        prefs.edit().putInt("dns_preset", value).apply()
+    }
+
+    fun changeDnsCustom(value: String) {
+        dnsCustom = value
+        prefs.edit().putString("dns_custom", value).apply()
+    }
+
+    fun changeMtu(value: Int) {
+        mtu = value
+        prefs.edit().putInt("mtu", value).apply()
+    }
+
+    fun dnsList(): List<String> {
+        if (dnsPreset in DnsPresets.servers.indices) return DnsPresets.servers[dnsPreset]
+        val custom = dnsCustom.split(',', ' ', ';', '\n')
+            .map { it.trim() }
+            .filter { it.matches(Regex("[0-9a-fA-F:.]+")) && (it.contains('.') || it.contains(':')) }
+        return custom.ifEmpty { DnsPresets.servers[0] }
     }
 
     fun changePalette(value: Int) {
@@ -160,50 +290,203 @@ class AppState(private val app: Application) {
         prefs.edit().putInt("accent", value).apply()
     }
 
-    suspend fun importText(text: String, nameHint: String = ""): String? {
+    private fun ensureGroup(name: String, url: String) {
+        val index = groups.indexOfFirst { it.name == name }
+        if (index < 0) {
+            groups.add(Group(name, url))
+        } else if (url.isNotBlank() && groups[index].url != url) {
+            groups[index] = Group(name, url)
+        }
+    }
+
+    suspend fun importText(
+        text: String,
+        nameHint: String = "",
+        groupHint: String = "",
+        forceGroup: String? = null,
+        forceUrl: String = ""
+    ): String? {
         val input = text.trim()
         if (input.isEmpty()) return "Вставьте ссылку или конфигурацию"
-        val items = ArrayList<String>()
-        for (item in Links.extract(input)) {
-            if (item.startsWith("http://", true) || item.startsWith("https://", true)) {
-                val body = try {
-                    withContext(Dispatchers.IO) { Links.fetch(item) }
+        class Item(val link: String, val group: String, val url: String)
+        val items = ArrayList<Item>()
+        val direct = ArrayList<String>()
+        val prepared = Importer.prepare(input)
+        if (prepared.error != null) return prepared.error
+        for (source in prepared.items) {
+            if (source.isUrl) {
+                val fetched = try {
+                    withContext(Dispatchers.IO) { Links.fetchMeta(source.value) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     return "Не удалось загрузить список: " + (e.message ?: "ошибка сети")
                 }
-                items.addAll(Links.extract(Links.decodeSubscription(body)))
+                val groupName = forceGroup ?: source.name.ifBlank { fetched.group }
+                for (link in Importer.prepare(Links.decodeSubscription(fetched.body)).items) {
+                    if (link.isUrl) continue
+                    items.add(Item(link.value, groupName, forceUrl.ifBlank { source.value }))
+                }
             } else {
-                items.add(item)
+                direct.add(source.value)
             }
         }
+        val directGroup = forceGroup ?: if (direct.size > 1) groupHint else ""
+        for (link in direct) items.add(Item(link, directGroup, forceUrl))
         var added = 0
         var failure: String? = null
+        val fresh = ArrayList<Server>()
         for (item in items) {
             try {
-                val parsed = Links.parse(item)
-                if (servers.none { it.conf == item }) {
+                val parsed = Links.parse(item.link)
+                val existing = servers.indexOfFirst { it.conf == item.link }
+                if (existing < 0) {
                     val hint = if (items.size == 1) nameHint else ""
                     val title = hint.ifBlank { parsed.name }.ifBlank { "Сервер ${servers.size + 1}" }
                     val id = "fq" + Integer.toHexString(Random.nextInt(0x100000, 0xFFFFFF))
-                    servers.add(Server(id, title, item, parsed.endpoint))
+                    val server = Server(id, title, item.link, parsed.endpoint, item.group.trim())
+                    servers.add(server)
+                    fresh.add(server)
                     if (selectedId == null) selectedId = id
+                } else if (item.group.isNotBlank() && servers[existing].group != item.group.trim()) {
+                    servers[existing] = servers[existing].copy(group = item.group.trim())
                 }
+                if (item.group.isNotBlank()) ensureGroup(item.group.trim(), item.url)
                 added++
             } catch (e: Exception) {
                 if (failure == null) failure = e.message ?: "Не удалось распознать"
             }
         }
         save()
+        if (added > 0 && autoPing && fresh.isNotEmpty()) ping(fresh)
         return if (added == 0) (failure ?: "Не удалось распознать") else null
     }
 
+    suspend fun refreshGroup(name: String): String? {
+        val group = groups.firstOrNull { it.name == name } ?: return "Группа не найдена"
+        if (group.url.isBlank()) return "У группы нет ссылки для обновления"
+        return importText(group.url, forceGroup = group.name, forceUrl = group.url)
+    }
+
     fun remove(server: Server) {
-        if (activeId == server.id && status == Status.On) disconnect()
-        servers.removeAll { it.id == server.id }
-        if (selectedId == server.id) selectedId = servers.firstOrNull()?.id
+        removeMany(setOf(server.id))
+    }
+
+    fun removeMany(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        if (activeId != null && activeId in ids && (status == Status.On || status == Status.Connecting)) disconnect()
+        servers.removeAll { it.id in ids }
+        ids.forEach { pings.remove(it) }
+        if (selectedId in ids) selectedId = servers.firstOrNull()?.id
         save()
+    }
+
+    fun clearGroup(name: String) {
+        removeMany(servers.filter { it.group == name }.map { it.id }.toSet())
+    }
+
+    fun removeGroup(name: String) {
+        clearGroup(name)
+        groups.removeAll { it.name == name }
+        save()
+    }
+
+    fun ping(list: List<Server>) {
+        if (list.isEmpty()) return
+        val mode = pingMode
+        val timeout = PingOptions.timeouts[pingTimeout.coerceIn(0, PingOptions.timeouts.size - 1)]
+        list.forEach { pings[it.id] = PingResult(busy = true) }
+        scope.launch {
+            val gate = Semaphore(8)
+            list.map { server ->
+                launch(Dispatchers.IO) {
+                    gate.withPermit {
+                        val result = try {
+                            Ping.measure(server, mode, timeout)
+                        } catch (e: Exception) {
+                            PingResult(tcp = Ping.FAIL)
+                        }
+                        pings[server.id] = result
+                    }
+                }
+            }.joinAll()
+        }
+    }
+
+    fun pingAll() = ping(servers.toList())
+
+    fun pingGroup(name: String) = ping(servers.filter { it.group == name })
+
+    fun refreshCores() {
+        cores.clear()
+        cores.addAll(Cores.list(app))
+        activeCore = Cores.active(app)
+        if (activeCore.isNotEmpty() && cores.none { it.id == activeCore }) {
+            Cores.setActive(app, "")
+            activeCore = ""
+        }
+    }
+
+    fun selectCore(id: String) {
+        Cores.setActive(app, id)
+        activeCore = id
+    }
+
+    fun deleteCore(id: String) {
+        Cores.delete(app, id)
+        refreshCores()
+    }
+
+    suspend fun importCore(uri: Uri, label: String): String? {
+        coreBusy = "Проверяю ядро…"
+        return try {
+            withContext(Dispatchers.IO) {
+                val stream = app.contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("Не удалось открыть файл")
+                stream.use { Cores.install(app, it, label) }
+            }
+            refreshCores()
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e.message ?: "Не удалось импортировать ядро"
+        } finally {
+            coreBusy = null
+        }
+    }
+
+    suspend fun loadReleases(): String? {
+        coreBusy = "Загружаю список версий…"
+        return try {
+            releases = withContext(Dispatchers.IO) { Cores.releases() }
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e.message ?: "Не удалось получить список версий"
+        } finally {
+            coreBusy = null
+        }
+    }
+
+    suspend fun downloadCore(release: Release): String? {
+        coreBusy = "Скачиваю Xray ${release.tag}…"
+        return try {
+            val info = withContext(Dispatchers.IO) {
+                val bytes = Cores.download(release.url)
+                Cores.install(app, ByteArrayInputStream(bytes), "Xray ${release.tag}")
+            }
+            refreshCores()
+            selectCore(info.id)
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e.message ?: "Не удалось скачать ядро"
+        } finally {
+            coreBusy = null
+        }
     }
 
     fun select(id: String) {
@@ -228,6 +511,15 @@ class AppState(private val app: Application) {
         if (status != Status.On && status != Status.Connecting) return
         update(Status.Stopping)
         pollJob?.cancel()
+        sendStop()
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(2500)
+            if (status == Status.Stopping) finishDown(null)
+        }
+    }
+
+    private fun sendStop() {
         try {
             PendingIntent.getService(
                 app,
@@ -237,11 +529,6 @@ class AppState(private val app: Application) {
             ).send()
         } catch (e: Throwable) {
             app.stopService(Intent(app, FasdeqVpnService::class.java))
-        }
-        timeoutJob?.cancel()
-        timeoutJob = scope.launch {
-            delay(2500)
-            if (status == Status.Stopping) finishDown(null)
         }
     }
 
@@ -287,8 +574,8 @@ class AppState(private val app: Application) {
     }
 
     private fun launchSwitch(target: Server) {
-        val config = try {
-            Links.buildConfig(Links.parse(target.conf).outbound)
+        val outbound = try {
+            Links.parse(target.conf).outbound.toString()
         } catch (e: Exception) {
             error = e.message ?: "Неверная конфигурация"
             return
@@ -299,7 +586,10 @@ class AppState(private val app: Application) {
         update(Status.Connecting)
         val intent = Intent(app, FasdeqVpnService::class.java)
             .setAction(FasdeqVpnService.ACTION_START)
-            .putExtra(FasdeqVpnService.EXTRA_CONFIG, config)
+            .putExtra(FasdeqVpnService.EXTRA_OUTBOUND, outbound)
+            .putExtra(FasdeqVpnService.EXTRA_CORE, Cores.activePath(app) ?: "")
+            .putExtra(FasdeqVpnService.EXTRA_DNS, dnsList().joinToString(","))
+            .putExtra(FasdeqVpnService.EXTRA_MTU, mtu)
             .putExtra(FasdeqVpnService.EXTRA_NAME, target.name)
             .putExtra(FasdeqVpnService.EXTRA_ID, target.id)
         try {
@@ -313,7 +603,7 @@ class AppState(private val app: Application) {
         timeoutJob = scope.launch {
             delay(20000)
             if (status == Status.Connecting && pendingId == target.id) {
-                app.stopService(Intent(app, FasdeqVpnService::class.java))
+                sendStop()
                 finishDown("Не удалось подключиться: истекло время ожидания")
             }
         }
@@ -346,7 +636,26 @@ class AppState(private val app: Application) {
             val arr = JSONArray(raw)
             (0 until arr.length()).map {
                 val o = arr.getJSONObject(it)
-                Server(o.getString("id"), o.getString("name"), o.getString("conf"), o.optString("endpoint"))
+                Server(
+                    o.getString("id"),
+                    o.getString("name"),
+                    o.getString("conf"),
+                    o.optString("endpoint"),
+                    o.optString("group")
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun loadGroups(): List<Group> {
+        val raw = prefs.getString("groups", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map {
+                val o = arr.getJSONObject(it)
+                Group(o.getString("name"), o.optString("url"))
             }
         } catch (e: Exception) {
             emptyList()
@@ -362,8 +671,15 @@ class AppState(private val app: Application) {
                     .put("name", it.name)
                     .put("conf", it.conf)
                     .put("endpoint", it.endpoint)
+                    .put("group", it.group)
             )
         }
-        prefs.edit().putString("servers", arr.toString()).putString("selected", selectedId).apply()
+        val garr = JSONArray()
+        groups.forEach { garr.put(JSONObject().put("name", it.name).put("url", it.url)) }
+        prefs.edit()
+            .putString("servers", arr.toString())
+            .putString("groups", garr.toString())
+            .putString("selected", selectedId)
+            .apply()
     }
 }

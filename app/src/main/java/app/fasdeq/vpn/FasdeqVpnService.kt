@@ -13,7 +13,13 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.system.Os
+import org.json.JSONObject
+import java.io.File
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
@@ -33,7 +39,15 @@ class FasdeqVpnService : VpnService() {
     @Volatile private var serverName = ""
     @Volatile private var serverId: String? = null
     @Volatile private var connectedAt = 0L
+    @Volatile private var child: java.lang.Process? = null
     private var wake: PowerManager.WakeLock? = null
+
+    private class Params(
+        val outbound: String,
+        val core: String,
+        val dns: List<String>,
+        val mtu: Int
+    )
 
     private fun handler(gen: Int) = object : CoreCallbackHandler {
         override fun startup(): Long = 0
@@ -51,18 +65,34 @@ class FasdeqVpnService : VpnService() {
             halt(null)
             return START_NOT_STICKY
         }
-        var config: String? = null
+        var params: Params? = null
         if (intent?.action == ACTION_START) {
-            config = intent.getStringExtra(EXTRA_CONFIG)
+            val outbound = intent.getStringExtra(EXTRA_OUTBOUND)
+            if (outbound != null) {
+                params = Params(
+                    outbound,
+                    intent.getStringExtra(EXTRA_CORE) ?: "",
+                    (intent.getStringExtra(EXTRA_DNS) ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
+                    intent.getIntExtra(EXTRA_MTU, 1500)
+                )
+            }
             serverName = intent.getStringExtra(EXTRA_NAME) ?: ""
             serverId = intent.getStringExtra(EXTRA_ID)
         } else if (intent == null && prefs.getBoolean(KEY_RUN, false)) {
-            config = prefs.getString(KEY_CONFIG, null)
+            val outbound = prefs.getString(KEY_CONFIG, null)
+            if (outbound != null) {
+                params = Params(
+                    outbound,
+                    prefs.getString(KEY_CORE, "") ?: "",
+                    (prefs.getString(KEY_DNS, "1.1.1.1,8.8.8.8") ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
+                    prefs.getInt(KEY_MTU, 1500)
+                )
+            }
             serverName = prefs.getString(KEY_NAME, "") ?: ""
             serverId = prefs.getString(KEY_ID, null)
         }
         enterForeground(false)
-        if (config == null) {
+        if (params == null) {
             stopForegroundCompat()
             stopSelf()
             return START_NOT_STICKY
@@ -71,11 +101,14 @@ class FasdeqVpnService : VpnService() {
         halted = false
         prefs.edit()
             .putBoolean(KEY_RUN, true)
-            .putString(KEY_CONFIG, config)
+            .putString(KEY_CONFIG, params.outbound)
+            .putString(KEY_CORE, params.core)
+            .putString(KEY_DNS, params.dns.joinToString(","))
+            .putInt(KEY_MTU, params.mtu)
             .putString(KEY_NAME, serverName)
             .putString(KEY_ID, serverId)
             .commit()
-        start(config)
+        start(params)
         return START_STICKY
     }
 
@@ -154,7 +187,111 @@ class FasdeqVpnService : VpnService() {
         wake = null
     }
 
-    private fun start(config: String) {
+    private fun pidOf(p: java.lang.Process): Int = try {
+        val f = p.javaClass.getDeclaredField("pid")
+        f.isAccessible = true
+        f.getInt(p)
+    } catch (e: Throwable) {
+        -1
+    }
+
+    private fun pidFile() = File(filesDir, "core.pid")
+
+    private fun killOrphan() {
+        try {
+            val f = pidFile()
+            if (f.exists()) {
+                val pid = f.readText().trim().toIntOrNull()
+                if (pid != null && pid > 1) Process.killProcess(pid)
+                f.delete()
+            }
+        } catch (e: Throwable) {
+        }
+    }
+
+    private fun killChild() {
+        val p = child
+        child = null
+        if (p != null) {
+            try {
+                p.destroyForcibly()
+            } catch (e: Throwable) {
+            }
+            val pid = pidOf(p)
+            if (pid > 1) {
+                try {
+                    Process.killProcess(pid)
+                } catch (e: Throwable) {
+                }
+            }
+        }
+        try {
+            pidFile().delete()
+        } catch (e: Throwable) {
+        }
+    }
+
+    private fun alive(p: java.lang.Process): Boolean = try {
+        p.exitValue()
+        false
+    } catch (e: IllegalThreadStateException) {
+        true
+    }
+
+    private fun startChild(path: String, outbound: JSONObject): Int {
+        killOrphan()
+        val port = ServerSocket(0).use { it.localPort }
+        Links.resolve(outbound)
+        val cfg = File(filesDir, "core_run.json")
+        cfg.writeText(Links.buildInner(outbound, port))
+        val process = ProcessBuilder(listOf(Cores.linker(), path, "run", "-c", cfg.absolutePath))
+            .redirectErrorStream(true)
+            .directory(filesDir)
+            .start()
+        child = process
+        val pid = pidOf(process)
+        if (pid > 1) {
+            try {
+                pidFile().writeText(pid.toString())
+            } catch (e: Throwable) {
+            }
+        }
+        val tail = ArrayList<String>()
+        Thread {
+            try {
+                process.inputStream.bufferedReader().forEachLine {
+                    synchronized(tail) {
+                        tail.add(it)
+                        if (tail.size > 8) tail.removeAt(0)
+                    }
+                }
+            } catch (e: Throwable) {
+            }
+        }.start()
+        val deadline = SystemClock.elapsedRealtime() + 7000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (!alive(process)) {
+                val last = synchronized(tail) { tail.lastOrNull() } ?: "без вывода"
+                throw IllegalStateException("Ядро Xray завершилось: $last")
+            }
+            try {
+                Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 200) }
+                Thread {
+                    try {
+                        process.waitFor()
+                    } catch (e: Throwable) {
+                    }
+                    if (child === process && !stopping && !halted) halt("Ядро Xray остановилось")
+                }.start()
+                return port
+            } catch (e: Exception) {
+                Thread.sleep(150)
+            }
+        }
+        throw IllegalStateException("Ядро Xray не запустилось")
+    }
+
+    private fun start(params: Params) {
         Thread {
             synchronized(lock) {
                 try {
@@ -162,17 +299,29 @@ class FasdeqVpnService : VpnService() {
                     generation++
                     stopping = false
                     val gen = generation
-                    val tun = Builder()
+                    val outbound = JSONObject(params.outbound)
+                    val config: String
+                    if (params.core.isNotEmpty() && File(params.core).exists()) {
+                        val port = startChild(params.core, outbound)
+                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu)
+                    } else {
+                        config = Links.buildConfig(outbound, params.mtu)
+                    }
+                    val builder = Builder()
                         .setSession("FasdeqVPN")
-                        .setMtu(1500)
+                        .setMtu(params.mtu)
                         .addAddress("172.19.0.1", 30)
                         .addAddress("fdfe:dcba:9876::1", 126)
                         .addRoute("0.0.0.0", 0)
                         .addRoute("::", 0)
-                        .addDnsServer("1.1.1.1")
-                        .addDnsServer("8.8.8.8")
                         .addDisallowedApplication(packageName)
-                        .establish()
+                    for (dns in params.dns) {
+                        try {
+                            builder.addDnsServer(dns)
+                        } catch (e: Exception) {
+                        }
+                    }
+                    val tun = builder.establish()
                         ?: throw IllegalStateException("Не удалось создать VPN-интерфейс")
                     iface = tun
                     val core = Libv2ray.newCoreController(handler(gen))
@@ -231,6 +380,7 @@ class FasdeqVpnService : VpnService() {
             worker.join(wait)
         }
         closeTun()
+        killChild()
     }
 
     private fun halt(message: String?) {
@@ -244,6 +394,7 @@ class FasdeqVpnService : VpnService() {
         VpnBridge.write(this, false, null)
         VpnBridge.send(this, false, message)
         releaseWake()
+        killChild()
         stopForegroundCompat()
         Thread {
             try {
@@ -266,11 +417,17 @@ class FasdeqVpnService : VpnService() {
     companion object {
         const val ACTION_START = "app.fasdeq.vpn.START"
         const val ACTION_STOP = "app.fasdeq.vpn.STOP"
-        const val EXTRA_CONFIG = "config"
+        const val EXTRA_OUTBOUND = "outbound"
+        const val EXTRA_CORE = "core"
+        const val EXTRA_DNS = "dns"
+        const val EXTRA_MTU = "mtu"
         const val EXTRA_NAME = "name"
         const val EXTRA_ID = "id"
         private const val KEY_RUN = "run"
         private const val KEY_CONFIG = "config"
+        private const val KEY_CORE = "core"
+        private const val KEY_DNS = "dns"
+        private const val KEY_MTU = "mtu"
         private const val KEY_NAME = "name"
         private const val KEY_ID = "id"
         private const val CHANNEL = "vpn_state"

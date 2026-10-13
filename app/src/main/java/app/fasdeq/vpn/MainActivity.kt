@@ -40,6 +40,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         askNotifications()
+        if (savedInstanceState == null) {
+            val st = FasdeqApp.state
+            if (st.autoConnect && st.status == Status.Off && st.selected != null && VpnService.prepare(this) == null) {
+                st.connect()
+            }
+        }
         setContent {
             FasdeqRoot(FasdeqApp.state, ::onPower)
         }
