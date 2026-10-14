@@ -1,6 +1,20 @@
 package app.fasdeq.vpn.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Velocity
+import app.fasdeq.vpn.Services
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.animation.animateColorAsState
@@ -242,18 +256,78 @@ private fun Home(state: AppState, onPower: () -> Unit) {
     val entries = buildEntries(state, collapsed)
     val currentEntries by rememberUpdatedState(entries)
     val spacing = with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.toPx() }
+    val bestIds = (0 until Services.names.size).map { state.bestFor(it) }
+    val heroHolder = remember { FloatArray(1) }
+    var collapse by remember { mutableFloatStateOf(0f) }
+    val canCollapse = entries.size >= 5
+    val canCollapseState by rememberUpdatedState(canCollapse)
+    val connection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val range = heroHolder[0]
+                if (!canCollapseState || range <= 0f || available.y >= 0f || collapse >= range) return Offset.Zero
+                val next = (collapse - available.y).coerceAtMost(range)
+                val used = next - collapse
+                collapse = next
+                return Offset(0f, -used)
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (!canCollapseState || available.y <= 0f || collapse <= 0f) return Offset.Zero
+                val next = (collapse - available.y).coerceAtLeast(0f)
+                val used = collapse - next
+                collapse = next
+                return Offset(0f, used)
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                val range = heroHolder[0]
+                if (canCollapseState && range > 0f && collapse > 0f && collapse < range) {
+                    val target = if (collapse > range * 0.5f) range else 0f
+                    animate(
+                        collapse,
+                        target,
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = Motion.k(300f))
+                    ) { value, _ -> collapse = value }
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+    val fully by remember { derivedStateOf { heroHolder[0] > 0f && collapse >= heroHolder[0] * 0.98f } }
+    val mini by remember { derivedStateOf { heroHolder[0] > 0f && collapse > heroHolder[0] * 0.6f } }
+    val miniAlpha by animateFloatAsState(if (mini) 1f else 0f, tween(Motion.d(250)), label = "mini")
+    val corner by animateDpAsState(
+        if (fully) 0.dp else 40.dp,
+        spring(dampingRatio = 0.7f, stiffness = Motion.k(250f)),
+        label = "corner"
+    )
+    LaunchedEffect(canCollapse) {
+        if (!canCollapse && collapse > 0f) {
+            animate(collapse, 0f) { value, _ -> collapse = value }
+        }
+    }
 
     BackHandler(enabled = selecting) { selection = emptySet() }
+    BackHandler(enabled = !selecting && collapse > 1f) {
+        scope.launch {
+            animate(
+                collapse,
+                0f,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = Motion.k(300f))
+            ) { value, _ -> collapse = value }
+        }
+    }
 
     val glow by animateFloatAsState(
-        if (state.status == Status.On) 0.22f else 0f,
+        if (state.status == Status.On && state.bgStyle < 2) 0.22f else 0f,
         tween(Motion.d(900)),
         label = "glow"
     )
 
     Column(Modifier.fillMaxSize()) {
         Box {
-        HeroBackdrop(Modifier.matchParentSize())
+        if (state.bgStyle == 0) HeroBackdrop(Modifier.matchParentSize())
         Column(
             Modifier
                 .fillMaxWidth()
@@ -272,19 +346,59 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                     style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.weight(1f)
                 )
+                if (miniAlpha > 0.01f) {
+                    FilledTonalIconButton(
+                        onClick = onPower,
+                        enabled = state.status == Status.On || state.status == Status.Off,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = if (state.status == Status.On) scheme.primary else scheme.secondaryContainer,
+                            contentColor = if (state.status == Status.On) scheme.onPrimary else scheme.onSecondaryContainer
+                        ),
+                        modifier = Modifier.graphicsLayer {
+                            alpha = miniAlpha
+                            scaleX = miniAlpha
+                            scaleY = miniAlpha
+                        }
+                    ) {
+                        Icon(painterResource(R.drawable.ic_power), "Подключение", Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
                 FilledTonalIconButton(onClick = { showSettings = true }) {
                     Icon(painterResource(R.drawable.ic_settings), "Настройки", Modifier.size(22.dp))
                 }
             }
-            Hero(state, onPower)
+            Box(
+                Modifier
+                    .clipToBounds()
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        val full = placeable.height
+                        heroHolder[0] = full.toFloat()
+                        val shown = (full - collapse.coerceIn(0f, full.toFloat())).toInt()
+                        layout(placeable.width, shown) {
+                            placeable.place(0, -(full - shown) / 2)
+                        }
+                    }
+                    .graphicsLayer {
+                        val f = if (heroHolder[0] > 0f) (collapse / heroHolder[0]).coerceIn(0f, 1f) else 0f
+                        alpha = (1f - f * 1.4f).coerceIn(0f, 1f)
+                        val sc = 1f - 0.2f * f
+                        scaleX = sc
+                        scaleY = sc
+                    }
+            ) {
+                Hero(state, onPower)
+            }
         }
         }
 
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            shape = RoundedCornerShape(topStart = 40.dp, topEnd = 40.dp),
+                .weight(1f)
+                .nestedScroll(connection),
+            shape = RoundedCornerShape(topStart = corner, topEnd = corner),
             color = scheme.surfaceContainerLow
         ) {
             Box(Modifier.fillMaxSize()) {
@@ -342,9 +456,30 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                     Icon(painterResource(R.drawable.ic_bolt), "Проверить пинг", Modifier.size(20.dp))
                                 }
                                 Spacer(Modifier.width(8.dp))
+                                FilledTonalButton(
+                                    onClick = { state.checkServices() },
+                                    enabled = !state.checkingServices
+                                ) {
+                                    if (state.checkingServices) {
+                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(painterResource(R.drawable.ic_apps), null, Modifier.size(18.dp))
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Сервисы")
+                                }
                             }
                         }
                     }
+                }
+                AnimatedContent(
+                    targetState = state.checks.isNotEmpty() && !selecting,
+                    transitionSpec = {
+                        fadeIn(tween(Motion.d(300))) togetherWith fadeOut(tween(Motion.d(200)))
+                    },
+                    label = "serviceStrip"
+                ) { show ->
+                    if (show) ServiceStrip(state, bestIds) else Spacer(Modifier.height(1.dp))
                 }
                 if (state.servers.isEmpty() && state.groups.isEmpty()) {
                     EmptyServers { showAdd = true }
@@ -422,6 +557,10 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                     selected = entry.server.id == state.selectedId,
                                     active = entry.server.id == state.activeServerId,
                                     ping = state.pings[entry.server.id],
+                                    check = state.checks[entry.server.id],
+                                    bestMask = bestIds.indices.fold(0) { acc, i ->
+                                        if (bestIds[i] == entry.server.id) acc or (1 shl i) else acc
+                                    },
                                     checked = if (selecting) entry.server.id in selection else null,
                                     onPing = { state.ping(listOf(entry.server)) },
                                     enterDelay = delay,

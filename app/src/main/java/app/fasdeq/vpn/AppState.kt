@@ -36,6 +36,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
 enum class Status { Off, Connecting, On, Stopping }
@@ -80,6 +82,7 @@ class AppState(private val app: Application) {
     val servers = mutableStateListOf<Server>()
     val groups = mutableStateListOf<Group>()
     val pings = mutableStateMapOf<String, PingResult>()
+    val checks = mutableStateMapOf<String, ServiceCheck>()
     val cores = mutableStateListOf<CoreInfo>()
     var selectedId by mutableStateOf<String?>(prefs.getString("selected", null))
         private set
@@ -110,6 +113,10 @@ class AppState(private val app: Application) {
     var dnsCustom by mutableStateOf(prefs.getString("dns_custom", "") ?: "")
         private set
     var mtu by mutableIntStateOf(prefs.getInt("mtu", 1500))
+        private set
+    var bgStyle by mutableIntStateOf(prefs.getInt("bg_style", 0))
+        private set
+    var checkingServices by mutableStateOf(false)
         private set
     var launchStyle by mutableIntStateOf(prefs.getInt("launch_style", 0))
         private set
@@ -186,6 +193,64 @@ class AppState(private val app: Application) {
             goUp()
         } else if (!live && status == Status.On) {
             finishDown(null)
+        }
+    }
+
+    fun changeBgStyle(value: Int) {
+        bgStyle = value
+        prefs.edit().putInt("bg_style", value).apply()
+    }
+
+    fun bestFor(index: Int): String? {
+        var bestId: String? = null
+        var best = Int.MAX_VALUE
+        for ((id, check) in checks) {
+            val v = check.ms.getOrNull(index)
+            if (v != null && v > 0 && v < best) {
+                best = v
+                bestId = id
+            }
+        }
+        return bestId
+    }
+
+    fun checkServices() {
+        if (checkingServices || servers.isEmpty()) return
+        checkingServices = true
+        val list = servers.toList()
+        checks.clear()
+        list.forEach { checks[it.id] = ServiceCheck(busy = true) }
+        val unsupported = AtomicBoolean(false)
+        val counters = list.associate { it.id to AtomicInteger(Services.names.size) }
+        scope.launch {
+            val gate = Semaphore(4)
+            list.flatMap { server ->
+                Services.names.indices.map { index ->
+                    launch(Dispatchers.IO) {
+                        gate.withPermit {
+                            val config = try {
+                                Services.probeConfig(Links.parse(server.conf).outbound)
+                            } catch (e: Exception) {
+                                null
+                            }
+                            val value = if (config == null) -1 else Services.delay(config, Services.urls[index])
+                            if (value == Services.UNSUPPORTED) unsupported.set(true)
+                            synchronized(checks) {
+                                val left = counters.getValue(server.id).decrementAndGet()
+                                val current = checks[server.id] ?: ServiceCheck(busy = true)
+                                checks[server.id] = current
+                                    .with(index, if (value > 0) value else -1)
+                                    .copy(busy = left > 0)
+                            }
+                        }
+                    }
+                }
+            }.joinAll()
+            checkingServices = false
+            if (unsupported.get()) {
+                checks.clear()
+                error = "Встроенное ядро не умеет проверять сервисы"
+            }
         }
     }
 
@@ -376,7 +441,10 @@ class AppState(private val app: Application) {
         if (ids.isEmpty()) return
         if (activeId != null && activeId in ids && (status == Status.On || status == Status.Connecting)) disconnect()
         servers.removeAll { it.id in ids }
-        ids.forEach { pings.remove(it) }
+        ids.forEach {
+            pings.remove(it)
+            checks.remove(it)
+        }
         if (selectedId in ids) selectedId = servers.firstOrNull()?.id
         save()
     }

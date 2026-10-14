@@ -444,13 +444,8 @@ private fun AboutCard() {
                     )
                 )
                 Text(
-                    "Версия 1.4 · Material You",
+                    "Версия 1.4",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant
-                )
-                Text(
-                    "Сделано с душой. Звёздочка на GitHub очень поможет",
-                    style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
@@ -573,6 +568,10 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                     Text("Стиль палитры", style = MaterialTheme.typography.titleMedium)
                     SegmentedChoice(Accents.styles, state.palette, enabled = !dynamicActive) {
                         state.changePalette(it)
+                    }
+                    Text("Фон главного экрана", style = MaterialTheme.typography.titleMedium)
+                    SegmentedChoice(listOf("Живой", "Как раньше", "Простой"), state.bgStyle) {
+                        state.changeBgStyle(it)
                     }
                     Text("Контраст", style = MaterialTheme.typography.titleMedium)
                     SegmentedChoice(listOf("Стандарт", "Средний", "Высокий"), state.contrast) {

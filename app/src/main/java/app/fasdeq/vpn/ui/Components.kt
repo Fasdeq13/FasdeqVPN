@@ -78,6 +78,7 @@ import app.fasdeq.vpn.PingResult
 import app.fasdeq.vpn.Ping
 import app.fasdeq.vpn.R
 import app.fasdeq.vpn.Server
+import app.fasdeq.vpn.ServiceCheck
 import app.fasdeq.vpn.Status
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -589,6 +590,8 @@ fun ServerCard(
     selected: Boolean,
     active: Boolean,
     ping: PingResult?,
+    check: ServiceCheck?,
+    bestMask: Int,
     checked: Boolean?,
     onPing: () -> Unit,
     enterDelay: Long,
@@ -692,6 +695,15 @@ fun ServerCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (check != null) {
+                    Spacer(Modifier.size(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        for (i in 0 until 3) {
+                            val v = check.ms.getOrNull(i)
+                            ServiceLogo(i, v, check.busy && v == null, (bestMask and (1 shl i)) != 0, 20.dp)
+                        }
+                    }
+                }
             }
             Spacer(Modifier.width(8.dp))
             PingPill(ping, onPing)
