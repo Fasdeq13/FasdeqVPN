@@ -594,6 +594,7 @@ fun ServerCard(
     bestMask: Int,
     checked: Boolean?,
     onPing: () -> Unit,
+    onRename: () -> Unit,
     enterDelay: Long,
     modifier: Modifier = Modifier
 ) {
@@ -705,7 +706,12 @@ fun ServerCard(
                     }
                 }
             }
-            Spacer(Modifier.width(8.dp))
+            if (checked == null) {
+                IconButton(onClick = onRename, modifier = Modifier.size(36.dp)) {
+                    Icon(painterResource(R.drawable.ic_edit), "Переименовать", Modifier.size(18.dp))
+                }
+            }
+            Spacer(Modifier.width(4.dp))
             PingPill(ping, onPing)
         }
     }
@@ -723,6 +729,7 @@ fun GroupHeader(
     onRefresh: () -> Unit,
     onClear: () -> Unit,
     onDelete: () -> Unit,
+    onRename: (() -> Unit)?,
     enterDelay: Long,
     modifier: Modifier = Modifier
 ) {
@@ -798,6 +805,16 @@ fun GroupHeader(
                         onClick = {
                             menu = false
                             onRefresh()
+                        }
+                    )
+                }
+                if (onRename != null) {
+                    DropdownMenuItem(
+                        text = { Text("Переименовать") },
+                        leadingIcon = { Icon(painterResource(R.drawable.ic_edit), null, Modifier.size(20.dp)) },
+                        onClick = {
+                            menu = false
+                            onRename()
                         }
                     )
                 }

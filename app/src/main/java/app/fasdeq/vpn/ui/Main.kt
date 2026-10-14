@@ -1,6 +1,7 @@
 package app.fasdeq.vpn.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,6 +61,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -109,6 +111,11 @@ private sealed class Confirm {
     object Selected : Confirm()
     class DeleteGroup(val name: String) : Confirm()
     class ClearGroup(val name: String) : Confirm()
+}
+
+private sealed class Rename {
+    class OfServer(val id: String, val name: String) : Rename()
+    class OfGroup(val name: String) : Rename()
 }
 
 private fun buildEntries(state: AppState, collapsed: Set<String>): List<Entry> {
@@ -253,6 +260,7 @@ private fun Home(state: AppState, onPower: () -> Unit) {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val selecting = selection.isNotEmpty()
+    var rename by remember { mutableStateOf<Rename?>(null) }
     val entries = buildEntries(state, collapsed)
     val currentEntries by rememberUpdatedState(entries)
     val spacing = with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.toPx() }
@@ -548,6 +556,7 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                         },
                                         onClear = { confirm = Confirm.ClearGroup(entry.name) },
                                         onDelete = { confirm = Confirm.DeleteGroup(entry.name) },
+                                        onRename = if (entry.ungrouped) null else ({ rename = Rename.OfGroup(entry.name) }),
                                         enterDelay = delay,
                                         modifier = Modifier.animateItem()
                                     )
@@ -563,6 +572,7 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                     },
                                     checked = if (selecting) entry.server.id in selection else null,
                                     onPing = { state.ping(listOf(entry.server)) },
+                                    onRename = { rename = Rename.OfServer(entry.server.id, entry.server.name) },
                                     enterDelay = delay,
                                     modifier = Modifier.animateItem()
                                 )
@@ -598,6 +608,50 @@ private fun Home(state: AppState, onPower: () -> Unit) {
 
     if (showAdd) AddServerSheet(state) { showAdd = false }
     if (showSettings) SettingsSheet(state) { showSettings = false }
+
+    rename?.let { r ->
+        val initial = when (r) {
+            is Rename.OfServer -> r.name
+            is Rename.OfGroup -> r.name
+        }
+        var text by remember(r) { mutableStateOf(initial) }
+        val apply = {
+            when (r) {
+                is Rename.OfServer -> state.renameServer(r.id, text)
+                is Rename.OfGroup -> {
+                    val err = state.renameGroup(r.name, text)
+                    if (err != null) state.error = err
+                }
+            }
+            rename = null
+        }
+        AlertDialog(
+            onDismissRequest = { rename = null },
+            title = { Text(if (r is Rename.OfServer) "Название сервера" else "Название группы") },
+            text = {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { apply() }, enabled = text.isNotBlank()) {
+                    Icon(painterResource(R.drawable.ic_check), null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Сохранить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { rename = null }) {
+                    Icon(painterResource(R.drawable.ic_close), null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Отмена")
+                }
+            }
+        )
+    }
 
     confirm?.let { c ->
         val title: String

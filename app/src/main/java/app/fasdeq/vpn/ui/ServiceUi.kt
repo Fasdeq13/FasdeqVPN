@@ -41,7 +41,7 @@ private val TelegramColor = Color(0xFF2AABEE)
 private val YouTubeColor = Color(0xFFFF0000)
 
 private fun DrawScope.drawService(index: Int, alpha: Float) {
-    val s = size.minDimension
+    val s = this.size.minDimension
     val white = Color.White.copy(alpha = alpha)
     when (index) {
         0 -> {
@@ -128,7 +128,7 @@ fun ServiceLogo(index: Int, value: Int?, busy: Boolean, best: Boolean, size: Dp 
     val ring = scheme.primary
     val error = scheme.error
     Canvas(Modifier.size(size)) {
-        val s = size.minDimension
+        val s = this.size.minDimension
         if (best) {
             drawCircle(
                 ring.copy(alpha = 0.25f),

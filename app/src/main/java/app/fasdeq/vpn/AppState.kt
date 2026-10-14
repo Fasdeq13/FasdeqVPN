@@ -449,6 +449,30 @@ class AppState(private val app: Application) {
         save()
     }
 
+    fun renameServer(id: String, name: String) {
+        val title = name.trim()
+        if (title.isEmpty()) return
+        val index = servers.indexOfFirst { it.id == id }
+        if (index < 0) return
+        servers[index] = servers[index].copy(name = title)
+        save()
+    }
+
+    fun renameGroup(old: String, name: String): String? {
+        val title = name.trim()
+        if (title.isEmpty()) return "Название не может быть пустым"
+        if (title == old) return null
+        if (groups.any { it.name == title }) return "Группа с таким названием уже есть"
+        val index = groups.indexOfFirst { it.name == old }
+        if (index < 0) return "Группа не найдена"
+        groups[index] = groups[index].copy(name = title)
+        for (i in servers.indices) {
+            if (servers[i].group == old) servers[i] = servers[i].copy(group = title)
+        }
+        save()
+        return null
+    }
+
     fun clearGroup(name: String) {
         removeMany(servers.filter { it.group == name }.map { it.id }.toSet())
     }
