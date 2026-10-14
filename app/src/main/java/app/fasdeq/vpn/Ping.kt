@@ -126,10 +126,14 @@ object Ping {
                     if (i > 0) PingResult(icmp = i) else PingResult(udp = u)
                 } else PingResult(udp = u)
             }
-            3 -> PingResult(
-                tcp = tcp(t.first, t.second, timeout),
-                udp = udp(t.first, t.second, timeout)
-            )
+            3 -> {
+                val box = arrayOfNulls<Int>(1)
+                val worker = Thread { box[0] = tcp(t.first, t.second, timeout) }
+                worker.start()
+                val u = udp(t.first, t.second, timeout)
+                worker.join()
+                PingResult(tcp = box[0] ?: FAIL, udp = u)
+            }
             4 -> PingResult(icmp = icmp(t.first, timeout))
             else -> if (udpNative) {
                 val i = icmp(t.first, timeout)

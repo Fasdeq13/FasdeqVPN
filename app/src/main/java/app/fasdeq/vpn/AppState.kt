@@ -15,6 +15,7 @@ import android.os.SystemClock
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -30,7 +31,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -72,6 +75,8 @@ class AppState(private val app: Application) {
     private val prefs = app.getSharedPreferences("fasdeq", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pollJob: Job? = null
+    private var checkedAt = prefs.getLong("checks_at", 0L)
+    private var recheckJob: Job? = null
     private var timeoutJob: Job? = null
     private var since = 0L
     private var baseRx = 0L
@@ -123,6 +128,8 @@ class AppState(private val app: Application) {
     var animSpeed by mutableIntStateOf(prefs.getInt("anim_speed", 2))
         private set
     var contrast by mutableIntStateOf(prefs.getInt("contrast", 0))
+    var powerScale by mutableFloatStateOf(prefs.getFloat("power_scale", 1f))
+    var textScale by mutableFloatStateOf(prefs.getFloat("text_scale", 1f))
         private set
     var activeCore by mutableStateOf(Cores.active(app))
         private set
@@ -161,6 +168,7 @@ class AppState(private val app: Application) {
     init {
         servers.addAll(load())
         groups.addAll(loadGroups())
+        loadChecks()
         if (servers.none { it.id == selectedId }) selectedId = servers.firstOrNull()?.id
         refreshCores()
         scope.launch { builtinVersion = withContext(Dispatchers.IO) { Cores.builtinVersion() } }
@@ -214,6 +222,53 @@ class AppState(private val app: Application) {
         return bestId
     }
 
+    private fun loadChecks() {
+        val raw = prefs.getString("checks", null) ?: return
+        try {
+            val obj = JSONObject(raw)
+            val ids = servers.map { it.id }.toSet()
+            for (id in obj.keys()) {
+                if (id !in ids) continue
+                val arr = obj.getJSONArray(id)
+                checks[id] = ServiceCheck(
+                    ms = (0 until Services.names.size).map { i ->
+                        val v = arr.optInt(i, 0)
+                        if (v == 0) null else v
+                    }
+                )
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun saveChecks() {
+        val obj = JSONObject()
+        synchronized(checks) {
+            for ((id, check) in checks) {
+                val arr = JSONArray()
+                for (i in 0 until Services.names.size) arr.put(check.ms.getOrNull(i) ?: 0)
+                obj.put(id, arr)
+            }
+        }
+        prefs.edit().putString("checks", obj.toString()).putLong("checks_at", checkedAt).apply()
+    }
+
+    private fun startRecheck() {
+        recheckJob?.cancel()
+        recheckJob = scope.launch {
+            while (isActive && status == Status.On) {
+                val due = checkedAt + 3_600_000L
+                val wait = due - System.currentTimeMillis()
+                if (wait <= 0L) {
+                    if (!checkingServices && servers.isNotEmpty()) checkServices()
+                    delay(60_000L)
+                } else {
+                    delay(minOf(wait, 60_000L))
+                }
+            }
+        }
+    }
+
     fun checkServices() {
         if (checkingServices || servers.isEmpty()) return
         checkingServices = true
@@ -223,26 +278,35 @@ class AppState(private val app: Application) {
         val unsupported = AtomicBoolean(false)
         val counters = list.associate { it.id to AtomicInteger(Services.names.size) }
         scope.launch {
-            val gate = Semaphore(4)
+            val gate = Semaphore(24)
             list.flatMap { server ->
+                val wireguard = try {
+                    Links.parse(server.conf).outbound.optString("protocol") == "wireguard"
+                } catch (e: Exception) {
+                    false
+                }
+                val lock = Mutex()
                 Services.names.indices.map { index ->
                     launch(Dispatchers.IO) {
-                        gate.withPermit {
-                            val config = try {
-                                Services.probeConfig(Links.parse(server.conf).outbound)
-                            } catch (e: Exception) {
-                                null
-                            }
-                            val value = if (config == null) -1 else Services.delay(config, Services.urls[index])
-                            if (value == Services.UNSUPPORTED) unsupported.set(true)
-                            synchronized(checks) {
-                                val left = counters.getValue(server.id).decrementAndGet()
-                                val current = checks[server.id] ?: ServiceCheck(busy = true)
-                                checks[server.id] = current
-                                    .with(index, if (value > 0) value else -1)
-                                    .copy(busy = left > 0)
+                        val run: suspend () -> Unit = {
+                            gate.withPermit {
+                                val config = try {
+                                    Services.probeConfig(Links.parse(server.conf).outbound)
+                                } catch (e: Exception) {
+                                    null
+                                }
+                                val value = if (config == null) -1 else Services.delay(config, Services.urls[index])
+                                if (value == Services.UNSUPPORTED) unsupported.set(true)
+                                synchronized(checks) {
+                                    val left = counters.getValue(server.id).decrementAndGet()
+                                    val current = checks[server.id] ?: ServiceCheck(busy = true)
+                                    checks[server.id] = current
+                                        .with(index, if (value > 0) value else -1)
+                                        .copy(busy = left > 0)
+                                }
                             }
                         }
+                        if (wireguard) lock.withLock { run() } else run()
                     }
                 }
             }.joinAll()
@@ -250,7 +314,10 @@ class AppState(private val app: Application) {
             if (unsupported.get()) {
                 checks.clear()
                 error = "Встроенное ядро не умеет проверять сервисы"
+            } else {
+                checkedAt = System.currentTimeMillis()
             }
+            saveChecks()
         }
     }
 
@@ -262,6 +329,16 @@ class AppState(private val app: Application) {
     fun changeAnimSpeed(value: Int) {
         animSpeed = value
         prefs.edit().putInt("anim_speed", value).apply()
+    }
+
+    fun changePowerScale(value: Float) {
+        powerScale = value
+        prefs.edit().putFloat("power_scale", value).apply()
+    }
+
+    fun changeTextScale(value: Float) {
+        textScale = value
+        prefs.edit().putFloat("text_scale", value).apply()
     }
 
     fun changeContrast(value: Int) {
@@ -445,6 +522,7 @@ class AppState(private val app: Application) {
             pings.remove(it)
             checks.remove(it)
         }
+        saveChecks()
         if (selectedId in ids) selectedId = servers.firstOrNull()?.id
         save()
     }
@@ -489,7 +567,7 @@ class AppState(private val app: Application) {
         val timeout = PingOptions.timeouts[pingTimeout.coerceIn(0, PingOptions.timeouts.size - 1)]
         list.forEach { pings[it.id] = PingResult(busy = true) }
         scope.launch {
-            val gate = Semaphore(8)
+            val gate = Semaphore(64)
             list.map { server ->
                 launch(Dispatchers.IO) {
                     gate.withPermit {
@@ -651,10 +729,12 @@ class AppState(private val app: Application) {
         uptime = 0
         update(Status.On)
         startPolling()
+        startRecheck()
     }
 
     private fun finishDown(message: String?) {
         pollJob?.cancel()
+        recheckJob?.cancel()
         activeId = null
         downSpeed = 0
         upSpeed = 0

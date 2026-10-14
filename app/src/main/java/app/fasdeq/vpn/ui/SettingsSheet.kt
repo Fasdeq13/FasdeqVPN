@@ -54,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -645,6 +646,18 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                             }
                         }
                     }
+                    Text("Размер кнопки запуска", style = MaterialTheme.typography.titleMedium)
+                    Slider(
+                        value = state.powerScale,
+                        onValueChange = { state.changePowerScale(it) },
+                        valueRange = 0.6f..1.4f
+                    )
+                    Text("Размер текста", style = MaterialTheme.typography.titleMedium)
+                    Slider(
+                        value = state.textScale,
+                        onValueChange = { state.changeTextScale(it) },
+                        valueRange = 0.8f..1.5f
+                    )
                     Text("Скорость анимаций", style = MaterialTheme.typography.titleMedium)
                     SegmentedChoice(Motion.names, state.animSpeed) { state.changeAnimSpeed(it) }
                     Text(

@@ -566,7 +566,7 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                     selected = entry.server.id == state.selectedId,
                                     active = entry.server.id == state.activeServerId,
                                     ping = state.pings[entry.server.id],
-                                    check = state.checks[entry.server.id],
+                                    check = if (state.checkingServices) state.checks[entry.server.id] else null,
                                     bestMask = bestIds.indices.fold(0) { acc, i ->
                                         if (bestIds[i] == entry.server.id) acc or (1 shl i) else acc
                                     },
@@ -718,7 +718,7 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
             .padding(bottom = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        PowerButton(state.status, state.launchStyle, onPower)
+        PowerButton(state.status, state.launchStyle, state.powerScale, onPower)
         val titleColor by animateColorAsState(
             if (on) scheme.primary else scheme.onSurface,
             tween(Motion.d(500)),
@@ -732,11 +732,18 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
             },
             label = "title"
         ) { value ->
-            Text(value, style = MaterialTheme.typography.headlineMedium, color = titleColor)
+            val base = MaterialTheme.typography.headlineMedium
+            Text(
+                value,
+                style = base.copy(fontSize = base.fontSize * state.textScale, lineHeight = base.lineHeight * state.textScale),
+                color = titleColor
+            )
         }
         Text(
             state.selected?.name ?: "Сервер не выбран",
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyLarge.let {
+                it.copy(fontSize = it.fontSize * state.textScale, lineHeight = it.lineHeight * state.textScale)
+            },
             color = scheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

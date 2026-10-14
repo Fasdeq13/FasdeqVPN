@@ -258,7 +258,7 @@ internal fun DrawScope.drawLaunch(
 }
 
 @Composable
-fun PowerButton(status: Status, style: Int, onClick: () -> Unit) {
+fun PowerButton(status: Status, style: Int, scale: Float, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val on = status == Status.On
@@ -350,7 +350,7 @@ fun PowerButton(status: Status, style: Int, onClick: () -> Unit) {
     val idle = scheme.secondaryContainer
     Box(
         Modifier
-            .size(256.dp)
+            .size(256.dp * scale)
             .graphicsLayer {
                 val s = rest * press
                 scaleX = s
@@ -377,7 +377,7 @@ fun PowerButton(status: Status, style: Int, onClick: () -> Unit) {
         }
         Box(
             Modifier
-                .size(176.dp)
+                .size(176.dp * scale)
                 .clip(CircleShape)
                 .clickable(
                     interactionSource = interaction,
@@ -394,7 +394,7 @@ fun PowerButton(status: Status, style: Int, onClick: () -> Unit) {
                 contentDescription = null,
                 tint = if (style == 3 && !on) scheme.primary else content,
                 modifier = Modifier
-                    .size(76.dp)
+                    .size(76.dp * scale)
                     .graphicsLayer {
                         scaleX = iconScale
                         scaleY = iconScale
