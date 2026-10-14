@@ -235,7 +235,8 @@ fun FasdeqRoot(state: AppState, onPower: () -> Unit) {
         state.palette,
         state.amoled,
         state.contrast,
-        state.animSpeed
+        state.animSpeed,
+        state.textScale
     ) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Box(Modifier.fillMaxSize()) {
@@ -723,18 +724,11 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
             },
             label = "title"
         ) { value ->
-            val base = MaterialTheme.typography.headlineMedium
-            Text(
-                value,
-                style = base.copy(fontSize = base.fontSize * state.textScale, lineHeight = base.lineHeight * state.textScale),
-                color = titleColor
-            )
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = titleColor)
         }
         Text(
             state.selected?.name ?: "Сервер не выбран",
-            style = MaterialTheme.typography.bodyLarge.let {
-                it.copy(fontSize = it.fontSize * state.textScale, lineHeight = it.lineHeight * state.textScale)
-            },
+            style = MaterialTheme.typography.bodyLarge,
             color = scheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

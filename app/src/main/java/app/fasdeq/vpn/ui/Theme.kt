@@ -13,6 +13,9 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -192,6 +195,7 @@ fun FasdeqTheme(
     amoled: Boolean,
     contrast: Int,
     animSpeed: Int,
+    textScale: Float,
     content: @Composable () -> Unit
 ) {
     Motion.scale = Motion.factors[animSpeed.coerceIn(0, Motion.factors.size - 1)]
@@ -221,5 +225,10 @@ fun FasdeqTheme(
             }
         }
     }
-    MaterialTheme(colorScheme = scheme, typography = AppTypography, shapes = AppShapes, content = content)
+    val density = LocalDensity.current
+    CompositionLocalProvider(
+        LocalDensity provides Density(density.density, density.fontScale * textScale)
+    ) {
+        MaterialTheme(colorScheme = scheme, typography = AppTypography, shapes = AppShapes, content = content)
+    }
 }

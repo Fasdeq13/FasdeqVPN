@@ -55,6 +55,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.SegmentedButton
@@ -482,6 +484,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
     val modes = listOf("Системная", "Светлая", "Тёмная")
     val power = remember { context.getSystemService(PowerManager::class.java) }
     var showCores by remember { mutableStateOf(false) }
+    var showReset by remember { mutableStateOf(false) }
 
     fun notificationsGranted(): Boolean =
         Build.VERSION.SDK_INT < 33 ||
@@ -774,7 +777,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text("Проверка сервисов при включённом VPN", style = MaterialTheme.typography.titleMedium)
-                    var intervalText by remember {
+                    var intervalText by remember(state.resetTick) {
                         mutableStateOf(state.checkInterval.toString().removeSuffix(".0"))
                     }
                     OutlinedTextField(
@@ -879,8 +882,34 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 }
             }
 
+            SettingsGroup("Сброс") {
+                SettingItem(
+                    icon = R.drawable.ic_refresh,
+                    title = "Настройки по умолчанию",
+                    subtitle = "Вернуть внешний вид, пинг, DNS и размеры к исходным. Серверы не затрагиваются",
+                    onClick = { showReset = true }
+                )
+            }
+
             AboutCard()
         }
+    }
+
+    if (showReset) {
+        AlertDialog(
+            onDismissRequest = { showReset = false },
+            title = { Text("Сбросить настройки?") },
+            text = { Text("Все настройки вернутся к значениям по умолчанию. Серверы и группы останутся.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.resetSettings()
+                    showReset = false
+                }) { Text("Сбросить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReset = false }) { Text("Отмена") }
+            }
+        )
     }
 
     if (showCores) CoresSheet(state) { showCores = false }

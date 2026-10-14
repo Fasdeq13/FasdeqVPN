@@ -128,6 +128,8 @@ class AppState(private val app: Application) {
     var animSpeed by mutableIntStateOf(prefs.getInt("anim_speed", 2))
         private set
     var contrast by mutableIntStateOf(prefs.getInt("contrast", 0))
+    var resetTick by mutableIntStateOf(0)
+        private set
     var checkInterval by mutableFloatStateOf(prefs.getFloat("check_interval", 60f))
     var powerScale by mutableFloatStateOf(prefs.getFloat("power_scale", 1f))
     var textScale by mutableFloatStateOf(prefs.getFloat("text_scale", 1f))
@@ -330,6 +332,31 @@ class AppState(private val app: Application) {
     fun changeAnimSpeed(value: Int) {
         animSpeed = value
         prefs.edit().putInt("anim_speed", value).apply()
+    }
+
+    fun resetSettings() {
+        setTheme(0)
+        setDynamic(Build.VERSION.SDK_INT >= 31)
+        applyAccent(0)
+        changePalette(0)
+        changeAmoled(false)
+        changeBurnIn(false)
+        changeContrast(0)
+        changeBgStyle(0)
+        changeLaunchStyle(0)
+        changeAnimSpeed(2)
+        changePowerScale(1f)
+        changeTextScale(1f)
+        changePingMode(0)
+        changePingTimeout(1)
+        changeAutoPing(false)
+        changeSortPing(false)
+        changeAutoConnect(false)
+        changeDnsPreset(0)
+        changeDnsCustom("")
+        changeMtu(1500)
+        changeCheckInterval(60f)
+        resetTick++
     }
 
     fun changeCheckInterval(value: Float) {
