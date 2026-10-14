@@ -128,6 +128,7 @@ class AppState(private val app: Application) {
     var animSpeed by mutableIntStateOf(prefs.getInt("anim_speed", 2))
         private set
     var contrast by mutableIntStateOf(prefs.getInt("contrast", 0))
+    var checkInterval by mutableFloatStateOf(prefs.getFloat("check_interval", 60f))
     var powerScale by mutableFloatStateOf(prefs.getFloat("power_scale", 1f))
     var textScale by mutableFloatStateOf(prefs.getFloat("text_scale", 1f))
         private set
@@ -257,13 +258,13 @@ class AppState(private val app: Application) {
         recheckJob?.cancel()
         recheckJob = scope.launch {
             while (isActive && status == Status.On) {
-                val due = checkedAt + 3_600_000L
+                val due = checkedAt + (checkInterval * 60_000f).toLong()
                 val wait = due - System.currentTimeMillis()
                 if (wait <= 0L) {
                     if (!checkingServices && servers.isNotEmpty()) checkServices()
-                    delay(60_000L)
+                    delay(2_000L)
                 } else {
-                    delay(minOf(wait, 60_000L))
+                    delay(wait.coerceIn(500L, 5_000L))
                 }
             }
         }
@@ -329,6 +330,11 @@ class AppState(private val app: Application) {
     fun changeAnimSpeed(value: Int) {
         animSpeed = value
         prefs.edit().putInt("anim_speed", value).apply()
+    }
+
+    fun changeCheckInterval(value: Float) {
+        checkInterval = value
+        prefs.edit().putFloat("check_interval", value).apply()
     }
 
     fun changePowerScale(value: Float) {

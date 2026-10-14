@@ -55,6 +55,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -767,6 +769,33 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                     subtitle = "Проверять все серверы при открытии приложения",
                     onClick = { state.changeAutoPing(!state.autoPing) }
                 ) { StateSwitch(state.autoPing) { state.changeAutoPing(it) } }
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Проверка сервисов при включённом VPN", style = MaterialTheme.typography.titleMedium)
+                    var intervalText by remember {
+                        mutableStateOf(state.checkInterval.toString().removeSuffix(".0"))
+                    }
+                    OutlinedTextField(
+                        value = intervalText,
+                        onValueChange = {
+                            intervalText = it
+                            val v = it.replace(',', '.').trim().toFloatOrNull()
+                            if (v != null && v >= 0.1f) state.changeCheckInterval(v)
+                        },
+                        label = { Text("Интервал, минут") },
+                        placeholder = { Text("60") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Можно дробные значения: 0.1, 0.5, 2. Минимум 0.1 минуты",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
                 SettingItem(
                     icon = R.drawable.ic_bolt,
                     title = "Сортировка по пингу",

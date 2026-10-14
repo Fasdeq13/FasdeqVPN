@@ -480,15 +480,6 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                         }
                     }
                 }
-                AnimatedContent(
-                    targetState = state.checks.isNotEmpty() && !selecting,
-                    transitionSpec = {
-                        fadeIn(tween(Motion.d(300))) togetherWith fadeOut(tween(Motion.d(200)))
-                    },
-                    label = "serviceStrip"
-                ) { show ->
-                    if (show) ServiceStrip(state, bestIds) else Spacer(Modifier.height(1.dp))
-                }
                 if (state.servers.isEmpty() && state.groups.isEmpty()) {
                     EmptyServers { showAdd = true }
                 } else {
@@ -566,7 +557,7 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                                     selected = entry.server.id == state.selectedId,
                                     active = entry.server.id == state.activeServerId,
                                     ping = state.pings[entry.server.id],
-                                    check = if (state.checkingServices) state.checks[entry.server.id] else null,
+                                    check = state.checks[entry.server.id],
                                     bestMask = bestIds.indices.fold(0) { acc, i ->
                                         if (bestIds[i] == entry.server.id) acc or (1 shl i) else acc
                                     },
