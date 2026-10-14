@@ -130,6 +130,7 @@ class AppState(private val app: Application) {
     var contrast by mutableIntStateOf(prefs.getInt("contrast", 0))
     var resetTick by mutableIntStateOf(0)
         private set
+    var autoCheck by mutableStateOf(prefs.getBoolean("auto_check", true))
     var checkInterval by mutableFloatStateOf(prefs.getFloat("check_interval", 60f))
     var powerScale by mutableFloatStateOf(prefs.getFloat("power_scale", 1f))
     var textScale by mutableFloatStateOf(prefs.getFloat("text_scale", 1f))
@@ -260,6 +261,10 @@ class AppState(private val app: Application) {
         recheckJob?.cancel()
         recheckJob = scope.launch {
             while (isActive && status == Status.On) {
+                if (!autoCheck) {
+                    delay(2_000L)
+                    continue
+                }
                 val due = checkedAt + (checkInterval * 60_000f).toLong()
                 val wait = due - System.currentTimeMillis()
                 if (wait <= 0L) {
@@ -355,8 +360,14 @@ class AppState(private val app: Application) {
         changeDnsPreset(0)
         changeDnsCustom("")
         changeMtu(1500)
+        changeAutoCheck(true)
         changeCheckInterval(60f)
         resetTick++
+    }
+
+    fun changeAutoCheck(value: Boolean) {
+        autoCheck = value
+        prefs.edit().putBoolean("auto_check", value).apply()
     }
 
     fun changeCheckInterval(value: Float) {

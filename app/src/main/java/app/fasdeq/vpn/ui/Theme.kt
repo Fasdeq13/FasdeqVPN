@@ -13,9 +13,8 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Density
+import androidx.compose.runtime.remember
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -225,10 +224,28 @@ fun FasdeqTheme(
             }
         }
     }
-    val density = LocalDensity.current
-    CompositionLocalProvider(
-        LocalDensity provides Density(density.density, density.fontScale * textScale)
-    ) {
-        MaterialTheme(colorScheme = scheme, typography = AppTypography, shapes = AppShapes, content = content)
-    }
+    val typography = remember(textScale) { AppTypography.scaled(textScale) }
+    MaterialTheme(colorScheme = scheme, typography = typography, shapes = AppShapes, content = content)
+}
+
+private fun Typography.scaled(k: Float): Typography {
+    if (k == 1f) return this
+    fun TextStyle.s(): TextStyle = copy(fontSize = fontSize * k, lineHeight = lineHeight * k)
+    return copy(
+        displayLarge = displayLarge.s(),
+        displayMedium = displayMedium.s(),
+        displaySmall = displaySmall.s(),
+        headlineLarge = headlineLarge.s(),
+        headlineMedium = headlineMedium.s(),
+        headlineSmall = headlineSmall.s(),
+        titleLarge = titleLarge.s(),
+        titleMedium = titleMedium.s(),
+        titleSmall = titleSmall.s(),
+        bodyLarge = bodyLarge.s(),
+        bodyMedium = bodyMedium.s(),
+        bodySmall = bodySmall.s(),
+        labelLarge = labelLarge.s(),
+        labelMedium = labelMedium.s(),
+        labelSmall = labelSmall.s()
+    )
 }
