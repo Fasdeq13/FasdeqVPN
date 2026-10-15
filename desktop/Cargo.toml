@@ -1,0 +1,30 @@
+[package]
+name = "fasdeqvpn"
+version = "1.4.0"
+edition = "2021"
+description = "FasdeqVPN"
+
+[dependencies]
+iced = { version = "0.14", features = ["canvas", "svg", "tokio", "advanced"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["socks-proxy"] }
+base64 = "0.22"
+percent-encoding = "2"
+directories = "6"
+tray-icon = "0.21"
+resvg = "0.45"
+rfd = "0.15"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+rand = "0.9"
+auto-launch = "0.5"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "macros"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { package = "gtk", version = "0.18" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
