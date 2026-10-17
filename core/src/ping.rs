@@ -111,7 +111,7 @@ pub fn icmp(host: &str, timeout: u64) -> i32 {
         cmd.args(["-c", "1", "-W", &seconds, host]);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null());
-    crate::xray::hide_window(&mut cmd);
+    crate::proc::hide_window(&mut cmd);
     let t0 = Instant::now();
     let Ok(mut child) = cmd.spawn() else {
         return FAIL;

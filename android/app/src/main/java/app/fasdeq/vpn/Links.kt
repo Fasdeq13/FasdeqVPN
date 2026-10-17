@@ -21,6 +21,18 @@ object Links {
     }
 
     fun parse(raw: String): Parsed {
+        val native = NativeCore.call { Native.parseLink(raw) }
+        if (native != null) {
+            return Parsed(
+                native.getString("name"),
+                native.getString("endpoint"),
+                native.getJSONObject("outbound")
+            )
+        }
+        return parseKt(raw)
+    }
+
+    private fun parseKt(raw: String): Parsed {
         val text = raw.trim()
         if (text.contains("[Interface]", ignoreCase = true)) return parseInterface(text)
         val end = text.indexOf("://")
@@ -34,14 +46,59 @@ object Links {
         }
     }
 
-    fun buildConfig(outbound: JSONObject, mtu: Int = 1500): String {
+    fun buildConfig(outbound: JSONObject, mtu: Int = 1500, t: Tuning = Tuning()): String {
         val tun = JSONObject()
             .put("tag", "tun")
             .put("protocol", "tun")
             .put("settings", JSONObject().put("name", "xray0").put("mtu", mtu))
+        if (t.sniffing) {
+            tun.put(
+                "sniffing",
+                JSONObject()
+                    .put("enabled", true)
+                    .put("destOverride", JSONArray().put("http").put("tls").put("quic"))
+            )
+        }
         outbound.put("tag", "proxy")
+        val protocol = outbound.optString("protocol")
+        val muxable = protocol in listOf("vless", "vmess", "trojan", "shadowsocks") &&
+            !outbound.toString().contains("xtls-rprx-vision")
+        if (t.mux && muxable) {
+            outbound.put("mux", JSONObject().put("enabled", true).put("concurrency", t.muxConcurrency))
+        }
+        val rules = JSONArray()
+        if (t.blockQuic) {
+            rules.put(
+                JSONObject()
+                    .put("type", "field")
+                    .put("network", "udp")
+                    .put("port", "443")
+                    .put("outboundTag", "block")
+            )
+        }
+        if (t.bypassLan) {
+            rules.put(
+                JSONObject()
+                    .put("type", "field")
+                    .put(
+                        "ip",
+                        JSONArray()
+                            .put("10.0.0.0/8")
+                            .put("172.16.0.0/12")
+                            .put("192.168.0.0/16")
+                            .put("169.254.0.0/16")
+                            .put("100.64.0.0/10")
+                            .put("fc00::/7")
+                            .put("fe80::/10")
+                    )
+                    .put("outboundTag", "direct")
+            )
+        }
+        val level = JSONObject().put("connIdle", t.connIdle)
+        if (t.bufferKb > 0) level.put("bufferSize", t.bufferKb)
         val root = JSONObject()
-            .put("log", JSONObject().put("loglevel", "warning"))
+            .put("log", JSONObject().put("loglevel", Tuning.logKeys[t.logLevel.coerceIn(0, Tuning.logKeys.size - 1)]))
+            .put("policy", JSONObject().put("levels", JSONObject().put("0", level)))
             .put("inbounds", JSONArray().put(tun))
             .put(
                 "outbounds",
@@ -50,6 +107,14 @@ object Links {
                     .put(JSONObject().put("tag", "direct").put("protocol", "freedom"))
                     .put(JSONObject().put("tag", "block").put("protocol", "blackhole"))
             )
+        if (rules.length() > 0 || t.domainStrategy != 0) {
+            root.put(
+                "routing",
+                JSONObject()
+                    .put("domainStrategy", Tuning.domainNames[t.domainStrategy.coerceIn(0, Tuning.domainNames.size - 1)])
+                    .put("rules", rules)
+            )
+        }
         return root.toString()
     }
 

@@ -115,6 +115,12 @@ object Ping {
     }
 
     fun measure(server: Server, mode: Int, timeout: Int): PingResult {
+        val native = NativeCore.ping(server.conf, server.endpoint, mode, timeout)
+        if (native != null) return native
+        return measureKt(server, mode, timeout)
+    }
+
+    private fun measureKt(server: Server, mode: Int, timeout: Int): PingResult {
         val t = target(server.endpoint) ?: return PingResult(tcp = FAIL)
         val udpNative = server.conf.contains("[Interface]", ignoreCase = true)
         return when (mode) {

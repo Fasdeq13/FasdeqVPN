@@ -24,7 +24,7 @@ pub fn send(cmd: TrayCmd) {
     }
 }
 
-pub fn raster(size: u32) -> (Vec<u8>, u32, u32) {
+fn render(size: u32) -> resvg::tiny_skia::Pixmap {
     let data = include_bytes!("../assets/app.svg");
     let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default())
         .expect("app icon");
@@ -35,12 +35,21 @@ pub fn raster(size: u32) -> (Vec<u8>, u32, u32) {
         resvg::tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
+    pixmap
+}
+
+pub fn raster(size: u32) -> (Vec<u8>, u32, u32) {
+    let pixmap = render(size);
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for p in pixmap.pixels() {
         let c = p.demultiply();
         out.extend_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
     }
     (out, size, size)
+}
+
+pub fn png(size: u32) -> Vec<u8> {
+    render(size).encode_png().unwrap_or_default()
 }
 
 fn build() -> Result<tray_icon::TrayIcon, String> {

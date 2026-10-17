@@ -1,5 +1,6 @@
 use crate::anim::{self, Spring, Tween};
 use crate::draw::TAU;
+use crate::conflict;
 use crate::importer;
 use crate::links;
 use crate::model::*;
@@ -37,6 +38,7 @@ pub enum Confirm {
     DeleteGroup(String),
     ClearGroup(String),
     Reset,
+    Conflict(String),
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +135,7 @@ pub enum Message {
     CoreDownload(Release),
     CoreDone(Result<CoreInfo, String>),
     OpenUrl(String),
+    ConflictChecked(String, Vec<String>),
     Noop,
 }
 
@@ -252,6 +255,7 @@ pub struct App {
     pub system_dark: bool,
     pub scheme: Scheme,
     pub auto_started: bool,
+    pub conflict_id: Option<String>,
 }
 
 pub fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> impl Future<Output = T> {
@@ -342,11 +346,14 @@ impl App {
             system_dark,
             scheme,
             auto_started: false,
+            conflict_id: None,
         };
         if !app.s.active_core.is_empty() && !app.cores.iter().any(|c| c.id == app.s.active_core) {
             app.s.active_core.clear();
         }
-        let mut tasks = vec![window::oldest().map(Message::Window)];
+        let (id, open) = window::open(window_settings(app.win_size));
+        app.window = Some(id);
+        let mut tasks = vec![open.map(|_| Message::Noop)];
         if app.s.auto_ping && !app.servers.is_empty() {
             tasks.push(app.ping_tasks(app.servers.clone()));
         }
@@ -373,7 +380,16 @@ impl App {
             }),
         ];
         if self.visible {
-            subs.push(window::frames().map(Message::Frame));
+            let fast = self.status != Status::Off
+                || self.anims.wave.value < 1.0
+                || self.press.is_some()
+                || self.sheet.iter().any(|x| *x)
+                || self.anims.sheets.iter().any(|x| !x.settled());
+            if fast {
+                subs.push(window::frames().map(Message::Frame));
+            } else {
+                subs.push(iced::time::every(Duration::from_millis(40)).map(Message::Frame));
+            }
         }
         Subscription::batch(subs)
     }
@@ -647,12 +663,12 @@ impl App {
     fn show_window(&mut self) -> Task<Message> {
         self.visible = true;
         match self.window {
-            Some(id) => Task::batch([
-                window::set_mode(id, window::Mode::Windowed),
-                window::minimize(id, false),
-                window::gain_focus(id),
-            ]),
-            None => Task::none(),
+            Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
+            None => {
+                let (id, open) = window::open(window_settings(self.win_size));
+                self.window = Some(id);
+                open.map(|_| Message::Noop)
+            }
         }
     }
 
@@ -835,6 +851,7 @@ impl App {
     fn close_top(&mut self) -> bool {
         if self.confirm.is_some() {
             self.confirm = None;
+            self.conflict_id = None;
             return true;
         }
         if self.rename.is_some() {
@@ -1016,18 +1033,16 @@ impl App {
                 if self.s.auto_connect && !self.auto_started {
                     self.auto_started = true;
                     if let Some(id) = self.selected.clone() {
-                        return self.connect(&id);
+                        return self.begin_connect(&id);
                     }
                 }
                 Task::none()
             }
-            Message::CloseRequested(_) => {
+            Message::CloseRequested(id) => {
                 if self.s.close_to_tray && tray::available() {
                     self.visible = false;
-                    match self.window {
-                        Some(id) => window::set_mode(id, window::Mode::Hidden),
-                        None => Task::none(),
-                    }
+                    self.window = None;
+                    window::close(id)
                 } else {
                     self.quit()
                 }
@@ -1049,7 +1064,7 @@ impl App {
                 TrayCmd::Toggle => match self.status {
                     Status::On => self.disconnect(),
                     Status::Off => match self.selected.clone() {
-                        Some(id) => self.connect(&id),
+                        Some(id) => self.begin_connect(&id),
                         None => Task::none(),
                     },
                     _ => Task::none(),
@@ -1060,7 +1075,7 @@ impl App {
                 self.anims.press.to(1.0);
                 match self.status {
                     Status::Off => match self.selected.clone() {
-                        Some(id) => self.connect(&id),
+                        Some(id) => self.begin_connect(&id),
                         None => {
                             self.set_error("Сначала добавьте сервер");
                             Task::none()
@@ -1211,6 +1226,7 @@ impl App {
             }
             Message::ConfirmCancel => {
                 self.confirm = None;
+                self.conflict_id = None;
                 Task::none()
             }
             Message::ConfirmApply => {
@@ -1247,6 +1263,10 @@ impl App {
                         self.reset_settings();
                         Task::none()
                     }
+                    Confirm::Conflict(_) => match self.conflict_id.take() {
+                        Some(id) => self.connect(&id),
+                        None => Task::none(),
+                    },
                 }
             }
             Message::RenameOpen(target, current) => {
@@ -1584,8 +1604,23 @@ impl App {
                 open_url(&url);
                 Task::none()
             }
+            Message::ConflictChecked(id, names) => {
+                if names.is_empty() {
+                    return self.connect(&id);
+                }
+                self.conflict_id = Some(id);
+                self.confirm = Some(Confirm::Conflict(names.join(", ")));
+                self.show_window()
+            }
             Message::Noop => Task::none(),
         }
+    }
+
+    fn begin_connect(&mut self, id: &str) -> Task<Message> {
+        let id = id.to_string();
+        Task::perform(blocking(conflict::running), move |names| {
+            Message::ConflictChecked(id.clone(), names)
+        })
     }
 
     fn submit_add(&mut self, text: String) -> Task<Message> {
@@ -1626,6 +1661,22 @@ impl App {
         self.reset_tick += 1;
         self.rescheme();
         self.save();
+    }
+}
+
+pub fn window_settings(size: Size) -> window::Settings {
+    let (rgba, w, h) = tray::raster(256);
+    window::Settings {
+        size,
+        min_size: Some(Size::new(380.0, 600.0)),
+        icon: window::icon::from_rgba(rgba, w, h).ok(),
+        exit_on_close_request: false,
+        #[cfg(target_os = "linux")]
+        platform_specific: window::settings::PlatformSpecific {
+            application_id: "FasdeqVPN".to_string(),
+            ..Default::default()
+        },
+        ..window::Settings::default()
     }
 }
 

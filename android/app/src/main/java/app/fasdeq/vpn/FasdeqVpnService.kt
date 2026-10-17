@@ -40,20 +40,24 @@ class FasdeqVpnService : VpnService() {
     @Volatile private var serverId: String? = null
     @Volatile private var connectedAt = 0L
     @Volatile private var child: java.lang.Process? = null
+    @Volatile private var lastParams: Params? = null
+    @Volatile private var userStop = false
+    private val recoveries = ArrayList<Long>()
     private var wake: PowerManager.WakeLock? = null
 
     private class Params(
         val outbound: String,
         val core: String,
         val dns: List<String>,
-        val mtu: Int
+        val mtu: Int,
+        val tuning: Tuning = Tuning()
     )
 
     private fun handler(gen: Int) = object : CoreCallbackHandler {
         override fun startup(): Long = 0
 
         override fun shutdown(): Long {
-            if (gen == generation && !stopping) halt("Соединение прервано")
+            if (gen == generation && !stopping) recover("Соединение прервано")
             return 0
         }
 
@@ -62,7 +66,8 @@ class FasdeqVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            halt(null)
+            userStop = true
+            halt(null, true)
             return START_NOT_STICKY
         }
         var params: Params? = null
@@ -73,7 +78,8 @@ class FasdeqVpnService : VpnService() {
                     outbound,
                     intent.getStringExtra(EXTRA_CORE) ?: "",
                     (intent.getStringExtra(EXTRA_DNS) ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
-                    intent.getIntExtra(EXTRA_MTU, 1500)
+                    intent.getIntExtra(EXTRA_MTU, 1500),
+                    Tuning.fromJson(intent.getStringExtra(EXTRA_TUNING))
                 )
             }
             serverName = intent.getStringExtra(EXTRA_NAME) ?: ""
@@ -85,7 +91,8 @@ class FasdeqVpnService : VpnService() {
                     outbound,
                     prefs.getString(KEY_CORE, "") ?: "",
                     (prefs.getString(KEY_DNS, "1.1.1.1,8.8.8.8") ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
-                    prefs.getInt(KEY_MTU, 1500)
+                    prefs.getInt(KEY_MTU, 1500),
+                    Tuning.fromJson(prefs.getString(KEY_TUNING, null))
                 )
             }
             serverName = prefs.getString(KEY_NAME, "") ?: ""
@@ -99,12 +106,16 @@ class FasdeqVpnService : VpnService() {
         }
         epoch++
         halted = false
+        userStop = false
+        lastParams = params
+        synchronized(recoveries) { recoveries.clear() }
         prefs.edit()
             .putBoolean(KEY_RUN, true)
             .putString(KEY_CONFIG, params.outbound)
             .putString(KEY_CORE, params.core)
             .putString(KEY_DNS, params.dns.joinToString(","))
             .putInt(KEY_MTU, params.mtu)
+            .putString(KEY_TUNING, params.tuning.toJson())
             .putString(KEY_NAME, serverName)
             .putString(KEY_ID, serverId)
             .commit()
@@ -281,7 +292,7 @@ class FasdeqVpnService : VpnService() {
                         process.waitFor()
                     } catch (e: Throwable) {
                     }
-                    if (child === process && !stopping && !halted) halt("Ядро Xray остановилось")
+                    if (child === process && !stopping && !halted) recover("Ядро Xray остановилось")
                 }.start()
                 return port
             } catch (e: Exception) {
@@ -303,18 +314,42 @@ class FasdeqVpnService : VpnService() {
                     val config: String
                     if (params.core.isNotEmpty() && File(params.core).exists()) {
                         val port = startChild(params.core, outbound)
-                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu)
+                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu, params.tuning)
                     } else {
-                        config = Links.buildConfig(outbound, params.mtu)
+                        config = Links.buildConfig(outbound, params.mtu, params.tuning)
                     }
+                    val t = params.tuning
                     val builder = Builder()
                         .setSession("FasdeqVPN")
                         .setMtu(params.mtu)
                         .addAddress("172.19.0.1", 30)
-                        .addAddress("fdfe:dcba:9876::1", 126)
                         .addRoute("0.0.0.0", 0)
-                        .addRoute("::", 0)
-                        .addDisallowedApplication(packageName)
+                    if (t.ipv6) {
+                        builder.addAddress("fdfe:dcba:9876::1", 126).addRoute("::", 0)
+                    }
+                    if (Build.VERSION.SDK_INT >= 29) builder.setMetered(!t.unmetered)
+                    val apps = t.appList()
+                    if (t.appMode == 2 && apps.isNotEmpty()) {
+                        for (a in apps) {
+                            try {
+                                builder.addAllowedApplication(a)
+                            } catch (e: Exception) {
+                            }
+                        }
+                    } else {
+                        try {
+                            builder.addDisallowedApplication(packageName)
+                        } catch (e: Exception) {
+                        }
+                        if (t.appMode == 1) {
+                            for (a in apps) {
+                                try {
+                                    builder.addDisallowedApplication(a)
+                                } catch (e: Exception) {
+                                }
+                            }
+                        }
+                    }
                     for (dns in params.dns) {
                         try {
                             builder.addDnsServer(dns)
@@ -383,9 +418,31 @@ class FasdeqVpnService : VpnService() {
         killChild()
     }
 
-    private fun halt(message: String?) {
+    private fun recover(message: String) {
+        val params = lastParams
+        val now = SystemClock.elapsedRealtime()
+        var allowed = false
+        synchronized(recoveries) {
+            recoveries.removeAll { now - it > 120_000L }
+            allowed = params != null && params.tuning.reconnect && recoveries.size < params.tuning.retries
+            if (allowed) recoveries.add(now)
+        }
+        if (params == null || halted || userStop || !allowed) {
+            halt(message)
+            return
+        }
+        Thread {
+            try {
+                Thread.sleep(params.tuning.retryDelay * 1000L)
+            } catch (e: Throwable) {
+            }
+            if (!halted && !userStop) start(params)
+        }.start()
+    }
+
+    private fun halt(message: String?, force: Boolean = false) {
         synchronized(this) {
-            if (halted) return
+            if (halted && !force) return
             halted = true
         }
         val mine = epoch
@@ -394,9 +451,12 @@ class FasdeqVpnService : VpnService() {
         VpnBridge.write(this, false, null)
         VpnBridge.send(this, false, message)
         releaseWake()
-        killChild()
         stopForegroundCompat()
         Thread {
+            try {
+                closeCore(1500)
+            } catch (e: Throwable) {
+            }
             try {
                 Thread.sleep(120)
             } catch (e: Throwable) {
@@ -406,10 +466,12 @@ class FasdeqVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        halt("VPN отключён системой")
+        userStop = true
+        halt("VPN отключён: соединение занято другим VPN-приложением или системой")
     }
 
     override fun onDestroy() {
+        userStop = true
         if (!halted) halt(null)
         super.onDestroy()
     }
@@ -421,6 +483,7 @@ class FasdeqVpnService : VpnService() {
         const val EXTRA_CORE = "core"
         const val EXTRA_DNS = "dns"
         const val EXTRA_MTU = "mtu"
+        const val EXTRA_TUNING = "tuning"
         const val EXTRA_NAME = "name"
         const val EXTRA_ID = "id"
         private const val KEY_RUN = "run"
@@ -428,6 +491,7 @@ class FasdeqVpnService : VpnService() {
         private const val KEY_CORE = "core"
         private const val KEY_DNS = "dns"
         private const val KEY_MTU = "mtu"
+        private const val KEY_TUNING = "tuning"
         private const val KEY_NAME = "name"
         private const val KEY_ID = "id"
         private const val CHANNEL = "vpn_state"

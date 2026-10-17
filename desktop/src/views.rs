@@ -227,7 +227,7 @@ fn hero<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     let mut col = column![
         power,
         tx(ctx, Ty::HeadlineMedium, title, color),
-        tx(ctx, Ty::TitleMedium, name, c.on_surface_variant),
+        named(ctx, &name, Ty::TitleMedium, c.on_surface_variant, 18.0 * ctx.ts),
     ]
     .spacing(4)
     .align_x(Alignment::Center);
@@ -256,27 +256,6 @@ fn hero<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
 
 fn home<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     let c = ctx.c;
-    let range = app.hero_height();
-    let h = (range - app.anims.collapse.x).max(0.0);
-    let hero_box = container(
-        container(hero(app, ctx))
-            .height(Length::Fixed(range))
-            .align_y(Alignment::Start),
-    )
-    .height(Length::Fixed(h))
-    .clip(true)
-    .width(Length::Fill);
-    let collapsed = app.anims.collapse.x > 1.0;
-    let top_r = if collapsed { 0.0 } else { 40.0 };
-    let list: El<'_> = if app.servers.is_empty() {
-        empty(app, ctx)
-    } else {
-        server_list(app, ctx)
-    };
-    let surface = container(list)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_| rounded4(c.container_low, top_r, top_r, 0.0, 0.0));
     let fab = container(pill(
         ctx,
         Some("add"),
@@ -290,11 +269,23 @@ fn home<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     .align_x(Alignment::End)
     .align_y(Alignment::End)
     .padding(pad(0.0, 20.0, 20.0, 0.0));
-    stack![
-        column![top_bar(app, ctx), hero_box, surface].width(Length::Fill).height(Length::Fill),
-        fab
-    ]
-    .into()
+    let body: El<'_> = if app.servers.is_empty() {
+        let surface = container(empty(app, ctx))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| rounded4(c.container_low, 40.0, 40.0, 0.0, 0.0));
+        column![top_bar(app, ctx), hero(app, ctx), vgap(12.0), surface]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        let list = container(server_list(app, ctx))
+            .width(Length::Fill)
+            .style(move |_| rounded4(c.container_low, 40.0, 40.0, 0.0, 0.0));
+        let scroll = scrollbox(ctx, column![hero(app, ctx), vgap(12.0), list]).height(Length::Fill);
+        column![top_bar(app, ctx), scroll].width(Length::Fill).height(Length::Fill).into()
+    };
+    stack![body, fab].into()
 }
 
 fn empty<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
@@ -346,10 +337,7 @@ fn server_list<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
         }
     }
     let _ = c;
-    scrollbox(ctx, col)
-        .on_scroll(|v| Message::Scrolled(v.absolute_offset().y))
-        .height(Length::Fill)
-        .into()
+    col.into()
 }
 
 fn header_row<'a>(
@@ -469,7 +457,7 @@ fn server_card<'a>(app: &'a App, ctx: &Ctx, s: Server) -> El<'a> {
     let body = row![
         lead,
         column![
-            txs(ctx, Ty::TitleMedium, s.name.clone(), fg),
+            named(ctx, &s.name, Ty::TitleMedium, fg, 16.0 * ctx.ts),
             txs(ctx, Ty::BodySmall, sub, c.on_surface_variant),
         ]
         .width(Length::Fill),
@@ -898,6 +886,11 @@ fn dialog<'a>(app: &'a App, ctx: &Ctx) -> Option<El<'a>> {
             Confirm::Selected => ("Удалить серверы?", format!("Будет удалено: {}", app.selection.len()), "Удалить"),
             Confirm::DeleteGroup(n) => ("Удалить группу?", format!("Группа «{}» и все её серверы будут удалены", n), "Удалить"),
             Confirm::ClearGroup(n) => ("Очистить группу?", format!("Все серверы группы «{}» будут удалены", n), "Очистить"),
+            Confirm::Conflict(n) => (
+                "Запущен другой VPN-клиент",
+                format!("Обнаружено: {}. Он управляет тем же системным прокси и сетью, поэтому FasdeqVPN может не работать. Выключите его и подключитесь снова.", n),
+                "Всё равно",
+            ),
             Confirm::Reset => ("Сбросить настройки?", "Все параметры вернутся к значениям по умолчанию".to_string(), "Сбросить"),
         };
         let card = container(

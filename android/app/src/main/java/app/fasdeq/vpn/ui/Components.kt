@@ -74,6 +74,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.fasdeq.vpn.AnimConfig
 import app.fasdeq.vpn.PingResult
 import app.fasdeq.vpn.Ping
 import app.fasdeq.vpn.R
@@ -93,6 +94,8 @@ object LaunchStyles {
     val names = listOf("Печенька", "Пульс", "Орбита", "Волна", "Неон")
 }
 
+private fun Color.al(v: Float): Color = copy(alpha = if (v.isNaN()) 0f else v.coerceIn(0f, 1f))
+
 internal fun DrawScope.drawLaunch(
     style: Int,
     phase: Float,
@@ -108,19 +111,26 @@ internal fun DrawScope.drawLaunch(
     accent: Color,
     base: Float
 ) {
+    @Suppress("NAME_SHADOWING") val amp = if (amp.isNaN()) 0f else amp.coerceIn(0f, 0.3f)
+    @Suppress("NAME_SHADOWING") val orbit = if (orbit.isNaN()) 0f else orbit.coerceIn(0f, 1f)
+    @Suppress("NAME_SHADOWING") val aura = if (aura.isNaN()) 0f else aura.coerceIn(0f, 1f)
+    @Suppress("NAME_SHADOWING") val level = if (level.isNaN()) 0f else level.coerceIn(0f, 1f)
+    @Suppress("NAME_SHADOWING") val burst = if (burst.isNaN()) 1f else burst.coerceIn(0f, 1f)
+    @Suppress("NAME_SHADOWING") val phase = if (phase.isNaN() || phase.isInfinite()) 0f else phase
+    if (base <= 0f || size.minDimension <= 0f) return
     val cx = size.width / 2f
     val cy = size.height / 2f
     val center = Offset(cx, cy)
     val act = maxOf(orbit, aura)
     if (burst < 1f) {
         drawCircle(
-            ring.copy(alpha = (1f - burst) * 0.55f),
+            ring.al((1f - burst) * 0.55f),
             radius = base * (1f + 1.25f * burst),
             center = center,
             style = Stroke(width = (16f * (1f - burst) + 2f).dp.toPx())
         )
         drawCircle(
-            ring.copy(alpha = (1f - burst) * 0.25f),
+            ring.al((1f - burst) * 0.25f),
             radius = base * (1f + 0.7f * burst),
             center = center,
             style = Stroke(width = (8f * (1f - burst) + 1f).dp.toPx())
@@ -131,7 +141,7 @@ internal fun DrawScope.drawLaunch(
             for (k in 0..3) {
                 val t = (phase * (0.12f + 0.18f * orbit) + k * 0.25f) % 1f
                 drawCircle(
-                    ring.copy(alpha = (1f - t) * (0.12f + 0.3f * act)),
+                    ring.al((1f - t) * (0.12f + 0.3f * act)),
                     radius = base * (1.02f + 0.95f * t),
                     center = center,
                     style = Stroke(width = 3.dp.toPx())
@@ -143,7 +153,7 @@ internal fun DrawScope.drawLaunch(
             for (r in 0..2) {
                 val radius = base * (1.28f + 0.27f * r)
                 drawCircle(
-                    ring.copy(alpha = 0.10f + 0.22f * act),
+                    ring.al(0.10f + 0.22f * act),
                     radius = radius,
                     center = center,
                     style = Stroke(width = 1.5f.dp.toPx())
@@ -153,7 +163,7 @@ internal fun DrawScope.drawLaunch(
                 for (i in 0 until count) {
                     val a = dir * phase * (1.1f + 0.4f * r) * (0.6f + 0.8f * orbit) + i * (TAU / count)
                     drawCircle(
-                        ring.copy(alpha = 0.35f + 0.65f * act),
+                        ring.al(0.35f + 0.65f * act),
                         radius = (4f + r).dp.toPx(),
                         center = Offset(cx + radius * cos(a), cy + radius * sin(a))
                     )
@@ -181,7 +191,7 @@ internal fun DrawScope.drawLaunch(
                         }
                         path.lineTo(w, size.height)
                         path.close()
-                        drawPath(path, ring.copy(alpha = if (layer == 0) 0.45f else 0.95f))
+                        drawPath(path, ring.al(if (layer == 0) 0.45f else 0.95f))
                     }
                 }
             }
@@ -197,7 +207,7 @@ internal fun DrawScope.drawLaunch(
                 rotate(spin, center) {
                     drawCircle(
                         brush = Brush.sweepGradient(
-                            listOf(Color.Transparent, ring.copy(alpha = a), accent.copy(alpha = a), Color.Transparent),
+                            listOf(Color.Transparent, ring.al(a), accent.al(a), Color.Transparent),
                             center
                         ),
                         radius = base * 1.2f,
@@ -212,7 +222,7 @@ internal fun DrawScope.drawLaunch(
                 for (k in 0..1) {
                     val t = (phase * 0.18f + k * 0.5f) % 1f
                     drawCircle(
-                        ring.copy(alpha = (1f - t) * 0.22f * aura),
+                        ring.al((1f - t) * 0.22f * aura),
                         radius = base * (1.06f + 0.6f * t),
                         center = center
                     )
@@ -224,7 +234,7 @@ internal fun DrawScope.drawLaunch(
                     val r = base * (1.3f + 0.1f * sin(phase * 2.2f + i)) * (0.7f + 0.3f * orbit)
                     val dot = (3.5f + 2.5f * abs(sin(phase * 3f + i * 1.3f))).dp.toPx()
                     drawCircle(
-                        ring.copy(alpha = 0.85f * orbit),
+                        ring.al(0.85f * orbit),
                         radius = dot,
                         center = Offset(cx + r * cos(a), cy + r * sin(a))
                     )
@@ -244,7 +254,7 @@ internal fun DrawScope.drawLaunch(
             if (orbit > 0.01f) {
                 val rad = base * 0.78f
                 drawArc(
-                    color = content.copy(alpha = orbit * 0.9f),
+                    color = content.al(orbit * 0.9f),
                     startAngle = phase * 57.2958f * 1.2f,
                     sweepAngle = 90f + 60f * sin(phase * 2f),
                     useCenter = false,
@@ -258,69 +268,80 @@ internal fun DrawScope.drawLaunch(
 }
 
 @Composable
-fun PowerButton(status: Status, style: Int, scale: Float, onClick: () -> Unit) {
+fun PowerButton(status: Status, style: Int, scale: Float, cfg: AnimConfig, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val on = status == Status.On
     val connecting = status == Status.Connecting
     val busy = connecting || status == Status.Stopping
+    val live = cfg.enabled
+    val k = if (live) cfg.intensity.coerceIn(0f, 2f) else 0f
 
     val container by animateColorAsState(
         if (on) scheme.primary else scheme.secondaryContainer,
-        tween(Motion.d(700)),
+        tween(if (live) Motion.d(700) else 1),
         label = "container"
     )
     val content by animateColorAsState(
         if (on) scheme.onPrimary else scheme.onSecondaryContainer,
-        tween(Motion.d(700)),
+        tween(if (live) Motion.d(700) else 1),
         label = "content"
     )
     val amp by animateFloatAsState(
         when {
-            connecting -> 0.09f
-            status == Status.Stopping -> 0.06f
-            on -> 0.05f
+            connecting -> 0.09f * k
+            status == Status.Stopping -> 0.06f * k
+            on && cfg.idleMotion -> 0.05f * k
             else -> 0f
-        },
-        spring(dampingRatio = 0.4f, stiffness = Motion.k(50f)),
+        }.coerceIn(0f, 0.3f),
+        tween(Motion.d(600)),
         label = "amp"
     )
     val speed by animateFloatAsState(
-        when {
+        if (!live) 0f else when {
             connecting -> 2.8f
             status == Status.Stopping -> 3.4f
-            on -> 0.35f
-            else -> 0.12f
-        },
+            on && cfg.idleMotion -> 0.35f
+            cfg.idleMotion -> 0.12f
+            else -> 0f
+        } * cfg.tempo.coerceIn(0.2f, 3f),
         tween(Motion.d(1000)),
         label = "speed"
     )
-    val orbit by animateFloatAsState(if (connecting) 1f else 0f, tween(Motion.d(600)), label = "orbit")
-    val aura by animateFloatAsState(if (on) 1f else 0f, tween(Motion.d(900)), label = "aura")
+    val orbit by animateFloatAsState(
+        if (connecting && live) 1f else 0f,
+        tween(Motion.d(600)),
+        label = "orbit"
+    )
+    val aura by animateFloatAsState(
+        if (on && live && cfg.idleMotion) 1f else 0f,
+        tween(Motion.d(900)),
+        label = "aura"
+    )
     val level by animateFloatAsState(
         when {
             on -> 1f
             connecting -> 0.55f
             else -> 0f
         },
-        tween(Motion.d(1400)),
+        tween(if (live) Motion.d(1400) else 1),
         label = "level"
     )
     val iconScale by animateFloatAsState(
-        if (busy) 0.78f else 1f,
-        spring(dampingRatio = 0.35f, stiffness = Motion.k(180f)),
+        if (busy && cfg.iconFx && live) 0.78f else 1f,
+        tween(Motion.d(350)),
         label = "iconScale"
     )
     val rest by animateFloatAsState(
-        if (on) 1.04f else 0.96f,
-        spring(dampingRatio = 0.4f, stiffness = Motion.k(90f)),
+        if (live) (if (on) 1f + 0.04f * k else 1f - 0.04f * k) else 1f,
+        tween(Motion.d(500)),
         label = "rest"
     )
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val press by animateFloatAsState(
-        if (pressed) 0.88f else 1f,
-        spring(dampingRatio = 0.35f, stiffness = Motion.k(380f)),
+        if (pressed && cfg.press && live) 0.9f else 1f,
+        tween(Motion.d(140)),
         label = "press"
     )
     val burst = remember { Animatable(1f) }
@@ -331,28 +352,36 @@ fun PowerButton(status: Status, style: Int, scale: Float, onClick: () -> Unit) {
         while (true) {
             androidx.compose.runtime.withFrameNanos { t ->
                 if (last != 0L) {
-                    phase = (phase + (t - last) / 1_000_000_000f * speed / Motion.scale) % (TAU * 50f)
+                    val dt = ((t - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
+                    phase = (phase + dt * speed / Motion.scale) % (TAU * 50f)
                 }
                 last = t
             }
         }
     }
-    LaunchedEffect(on) {
-        if (on) {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    LaunchedEffect(on, live, cfg.burst) {
+        if (on && live && cfg.burst) {
             burst.snapTo(0f)
             burst.animateTo(1f, tween(Motion.d(1200), easing = FastOutSlowInEasing))
+        } else {
+            burst.snapTo(1f)
         }
+    }
+    LaunchedEffect(on, cfg.haptics) {
+        if (on && cfg.haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
     val ring = scheme.primary
     val accent = scheme.tertiary
     val idle = scheme.secondaryContainer
+    val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+    val boxSize = minOf(256.dp * scale, screenWidth - 56.dp).coerceAtLeast(120.dp)
+    val fit = boxSize / 256.dp
     Box(
         Modifier
-            .size(256.dp * scale)
+            .size(boxSize)
             .graphicsLayer {
-                val s = rest * press
+                val s = (rest * press).coerceIn(0.5f, 1.1f)
                 scaleX = s
                 scaleY = s
             },
@@ -377,14 +406,14 @@ fun PowerButton(status: Status, style: Int, scale: Float, onClick: () -> Unit) {
         }
         Box(
             Modifier
-                .size(176.dp * scale)
+                .size(176.dp * fit)
                 .clip(CircleShape)
                 .clickable(
                     interactionSource = interaction,
                     indication = null,
                     enabled = !busy
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    if (cfg.haptics) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onClick()
                 },
             contentAlignment = Alignment.Center
@@ -394,11 +423,12 @@ fun PowerButton(status: Status, style: Int, scale: Float, onClick: () -> Unit) {
                 contentDescription = null,
                 tint = if (style == 3 && !on) scheme.primary else content,
                 modifier = Modifier
-                    .size(76.dp * scale)
+                    .size(76.dp * fit)
                     .graphicsLayer {
-                        scaleX = iconScale
-                        scaleY = iconScale
-                        rotationZ = if (connecting) sin(phase * 2f) * 12f else 0f
+                        val sc = iconScale.coerceIn(0.5f, 1.1f)
+                        scaleX = sc
+                        scaleY = sc
+                        rotationZ = if (connecting && cfg.iconFx && live) sin(phase * 2f) * 12f * k.coerceAtMost(1.5f) else 0f
                     }
             )
         }
@@ -487,16 +517,17 @@ fun ConnectWave(status: Status) {
         val p = progress.value
         if (p < 1f) {
             val center = Offset(size.width / 2f, 260.dp.toPx())
-            val maxR = hypot(size.width, size.height)
+            val maxR = size.width * 0.8f
+            val q = p.coerceIn(0f, 1f)
             drawCircle(
-                color.copy(alpha = (1f - p) * 0.24f),
-                radius = maxR * p,
+                color.copy(alpha = (1f - q) * 0.22f),
+                radius = maxR * q,
                 center = center,
-                style = Stroke(width = 110.dp.toPx())
+                style = Stroke(width = 56.dp.toPx())
             )
             drawCircle(
-                color.copy(alpha = (1f - p) * 0.10f),
-                radius = maxR * p * 0.75f,
+                color.copy(alpha = (1f - q) * 0.08f),
+                radius = maxR * q * 0.7f,
                 center = center
             )
         }

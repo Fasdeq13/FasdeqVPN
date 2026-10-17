@@ -13,8 +13,8 @@ android {
         applicationId = (project.findProperty("app.id") as String?) ?: "app.fasdeq.vpn"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = (project.findProperty("app.vcode") as String?)?.toInt() ?: 7
+        versionName = (project.findProperty("app.vname") as String?) ?: "1.6"
         manifestPlaceholders["appLabel"] = (project.findProperty("app.label") as String?) ?: "FasdeqVPN"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")

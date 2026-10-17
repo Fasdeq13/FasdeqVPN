@@ -1,0 +1,16 @@
+[package]
+name = "fasdeq-core"
+version = "1.4.0"
+edition = "2021"
+description = "FasdeqVPN shared core"
+
+[lib]
+name = "fasdeq_core"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["socks-proxy"] }
+base64 = "0.22"
+percent-encoding = "2"
+rand = "0.9"

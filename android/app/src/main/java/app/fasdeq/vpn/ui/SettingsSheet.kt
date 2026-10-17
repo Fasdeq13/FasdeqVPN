@@ -95,6 +95,7 @@ import app.fasdeq.vpn.DnsPresets
 import app.fasdeq.vpn.FasdeqTileService
 import app.fasdeq.vpn.PingOptions
 import app.fasdeq.vpn.R
+import app.fasdeq.vpn.Tuning
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -673,6 +674,64 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 }
             }
 
+            SettingsGroup("Анимация кнопки") {
+                SettingItem(
+                    icon = R.drawable.ic_bolt,
+                    title = "Анимация включена",
+                    subtitle = "Полностью выключает движение кнопки. Цвета меняются мгновенно",
+                    onClick = { state.changeAnim(state.anim.copy(enabled = !state.anim.enabled)) }
+                ) { StateSwitch(state.anim.enabled) { state.changeAnim(state.anim.copy(enabled = it)) } }
+                if (state.anim.enabled) {
+                    Column(
+                        Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        LabeledSlider(
+                            "Сила деформации",
+                            (state.anim.intensity * 100).toInt().toString() + "%",
+                            state.anim.intensity,
+                            0f..2f
+                        ) { state.changeAnim(state.anim.copy(intensity = it)) }
+                        LabeledSlider(
+                            "Темп",
+                            "x" + (Math.round(state.anim.tempo * 100) / 100f).toString(),
+                            state.anim.tempo,
+                            0.2f..3f
+                        ) { state.changeAnim(state.anim.copy(tempo = it)) }
+                    }
+                    SettingItem(
+                        icon = R.drawable.ic_bolt,
+                        title = "Всплеск при подключении",
+                        subtitle = "Расходящиеся кольца в момент включения",
+                        onClick = { state.changeAnim(state.anim.copy(burst = !state.anim.burst)) }
+                    ) { StateSwitch(state.anim.burst) { state.changeAnim(state.anim.copy(burst = it)) } }
+                    SettingItem(
+                        icon = R.drawable.ic_bolt,
+                        title = "Движение в покое",
+                        subtitle = "Медленное дыхание, когда VPN включён или выключен",
+                        onClick = { state.changeAnim(state.anim.copy(idleMotion = !state.anim.idleMotion)) }
+                    ) { StateSwitch(state.anim.idleMotion) { state.changeAnim(state.anim.copy(idleMotion = it)) } }
+                    SettingItem(
+                        icon = R.drawable.ic_power,
+                        title = "Анимация иконки",
+                        subtitle = "Сжатие и покачивание значка питания при подключении",
+                        onClick = { state.changeAnim(state.anim.copy(iconFx = !state.anim.iconFx)) }
+                    ) { StateSwitch(state.anim.iconFx) { state.changeAnim(state.anim.copy(iconFx = it)) } }
+                    SettingItem(
+                        icon = R.drawable.ic_power,
+                        title = "Эффект нажатия",
+                        subtitle = "Кнопка слегка уменьшается под пальцем",
+                        onClick = { state.changeAnim(state.anim.copy(press = !state.anim.press)) }
+                    ) { StateSwitch(state.anim.press) { state.changeAnim(state.anim.copy(press = it)) } }
+                }
+                SettingItem(
+                    icon = R.drawable.ic_bell,
+                    title = "Вибрация",
+                    subtitle = "Отклик при нажатии и подключении",
+                    onClick = { state.changeAnim(state.anim.copy(haptics = !state.anim.haptics)) }
+                ) { StateSwitch(state.anim.haptics) { state.changeAnim(state.anim.copy(haptics = it)) } }
+            }
+
             SettingsGroup("Экран") {
                 SettingItem(
                     icon = R.drawable.ic_screen,
@@ -743,6 +802,144 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                         ?: ("Встроенное" + if (state.builtinVersion.isNotBlank()) " · " + state.builtinVersion else "")),
                     onClick = { showCores = true }
                 )
+            }
+
+            SettingsGroup("Низкоуровневые") {
+                val tn = state.tuning
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "IPv6",
+                    subtitle = "Выключите, если сайты зависают из-за IPv6",
+                    onClick = { state.changeTuning(tn.copy(ipv6 = !tn.ipv6)) }
+                ) { StateSwitch(tn.ipv6) { state.changeTuning(tn.copy(ipv6 = it)) } }
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "Sniffing",
+                    subtitle = "Определять домен по HTTP, TLS и QUIC для точной маршрутизации",
+                    onClick = { state.changeTuning(tn.copy(sniffing = !tn.sniffing)) }
+                ) { StateSwitch(tn.sniffing) { state.changeTuning(tn.copy(sniffing = it)) } }
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "Блокировать QUIC",
+                    subtitle = "Закрывает UDP 443, браузеры переходят на TCP. Помогает при зависаниях видео",
+                    onClick = { state.changeTuning(tn.copy(blockQuic = !tn.blockQuic)) }
+                ) { StateSwitch(tn.blockQuic) { state.changeTuning(tn.copy(blockQuic = it)) } }
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "Локальная сеть напрямую",
+                    subtitle = "Адреса 10.x, 172.16.x, 192.168.x, 169.254.x идут мимо VPN",
+                    onClick = { state.changeTuning(tn.copy(bypassLan = !tn.bypassLan)) }
+                ) { StateSwitch(tn.bypassLan) { state.changeTuning(tn.copy(bypassLan = it)) } }
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "Mux",
+                    subtitle = "Мультиплексирование для VLESS, VMess, Trojan, Shadowsocks. Не работает с XTLS Vision",
+                    onClick = { state.changeTuning(tn.copy(mux = !tn.mux)) }
+                ) { StateSwitch(tn.mux) { state.changeTuning(tn.copy(mux = it)) } }
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "Сеть без лимита",
+                    subtitle = "Система не считает VPN-трафик мобильным и не режет фоновые загрузки",
+                    onClick = { state.changeTuning(tn.copy(unmetered = !tn.unmetered)) }
+                ) { StateSwitch(tn.unmetered) { state.changeTuning(tn.copy(unmetered = it)) } }
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Уровень лога Xray", style = MaterialTheme.typography.titleMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(Tuning.logNames.indices.toList()) { index ->
+                            FilterChip(
+                                selected = tn.logLevel == index,
+                                onClick = { state.changeTuning(tn.copy(logLevel = index)) },
+                                label = { Text(Tuning.logNames[index]) }
+                            )
+                        }
+                    }
+                    Text("Domain strategy", style = MaterialTheme.typography.titleMedium)
+                    SegmentedChoice(Tuning.domainNames, tn.domainStrategy) {
+                        state.changeTuning(tn.copy(domainStrategy = it))
+                    }
+                    if (tn.mux) {
+                        LabeledSlider("Потоков Mux", tn.muxConcurrency.toString(), tn.muxConcurrency.toFloat(), 1f..64f) {
+                            state.changeTuning(tn.copy(muxConcurrency = it.toInt()))
+                        }
+                    }
+                    LabeledSlider(
+                        "Таймаут простоя соединения",
+                        tn.connIdle.toString() + " с",
+                        tn.connIdle.toFloat(),
+                        30f..1800f
+                    ) { state.changeTuning(tn.copy(connIdle = it.toInt())) }
+                    LabeledSlider(
+                        "Буфер на соединение",
+                        if (tn.bufferKb == 0) "по умолчанию" else tn.bufferKb.toString() + " КБ",
+                        tn.bufferKb.toFloat(),
+                        0f..2048f
+                    ) { state.changeTuning(tn.copy(bufferKb = (it / 64f).toInt() * 64)) }
+                    Text(
+                        "Маленький буфер экономит память, большой ускоряет загрузку",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            SettingsGroup("Авто-переподключение") {
+                val tn = state.tuning
+                SettingItem(
+                    icon = R.drawable.ic_refresh,
+                    title = "Переподключаться при обрыве",
+                    subtitle = "Если выключено, VPN остановится при первой же ошибке",
+                    onClick = { state.changeTuning(tn.copy(reconnect = !tn.reconnect)) }
+                ) { StateSwitch(tn.reconnect) { state.changeTuning(tn.copy(reconnect = it)) } }
+                if (tn.reconnect) {
+                    Column(
+                        Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        LabeledSlider("Попыток за 2 минуты", tn.retries.toString(), tn.retries.toFloat(), 1f..20f) {
+                            state.changeTuning(tn.copy(retries = it.toInt()))
+                        }
+                        LabeledSlider("Пауза между попытками", tn.retryDelay.toString() + " с", tn.retryDelay.toFloat(), 1f..30f) {
+                            state.changeTuning(tn.copy(retryDelay = it.toInt()))
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup("Приложения") {
+                val tn = state.tuning
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Режим", style = MaterialTheme.typography.titleMedium)
+                    SegmentedChoice(Tuning.appModes, tn.appMode) { state.changeTuning(tn.copy(appMode = it)) }
+                    Text(
+                        when (tn.appMode) {
+                            1 -> "Перечисленные приложения ходят мимо VPN"
+                            2 -> "Через VPN идут только перечисленные приложения"
+                            else -> "Через VPN идут все приложения"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant
+                    )
+                    if (tn.appMode != 0) {
+                        OutlinedTextField(
+                            value = tn.apps,
+                            onValueChange = { state.changeTuning(tn.copy(apps = it)) },
+                            label = { Text("Пакеты через запятую") },
+                            placeholder = { Text("org.telegram.messenger, com.discord") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "Распознано пакетов: " + tn.appList().size + ". Применяется при следующем подключении",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             SettingsGroup("Проверка пинга") {
@@ -920,4 +1117,25 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
     }
 
     if (showCores) CoresSheet(state) { showCores = false }
+}
+
+@Composable
+private fun LabeledSlider(
+    title: String,
+    valueText: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit
+) {
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                valueText,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Slider(value = value.coerceIn(range.start, range.endInclusive), onValueChange = onChange, valueRange = range)
+    }
 }

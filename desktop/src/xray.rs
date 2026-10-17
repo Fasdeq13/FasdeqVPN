@@ -23,17 +23,7 @@ pub struct Release {
     pub size: u64,
 }
 
-pub fn hide_window(cmd: &mut Command) {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = cmd;
-    }
-}
+pub use fasdeq_core::proc::hide_window;
 
 fn exe_name() -> &'static str {
     if cfg!(target_os = "windows") {

@@ -1,0 +1,18 @@
+[package]
+name = "fasdeq-native"
+version = "1.4.0"
+edition = "2021"
+
+[lib]
+name = "fasdeq_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fasdeq-core = { path = "../core" }
+serde_json = "1"
+jni = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

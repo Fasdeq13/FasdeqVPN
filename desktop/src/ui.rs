@@ -8,7 +8,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 pub type El<'a> = Element<'a, Message>;
 
@@ -632,4 +632,47 @@ pub fn block<'a>(children: Vec<El<'a>>) -> El<'a> {
         .padding(pad(10.0, 18.0, 10.0, 18.0))
         .width(Length::Fill)
         .into()
+}
+
+pub fn split_flag(name: &str) -> (Option<String>, String) {
+    let mut it = name.trim_start().chars();
+    let (Some(a), Some(b)) = (it.next(), it.next()) else {
+        return (None, name.to_string());
+    };
+    let reg = |c: char| ('\u{1F1E6}'..='\u{1F1FF}').contains(&c);
+    if reg(a) && reg(b) {
+        let code: String = [a, b]
+            .iter()
+            .map(|c| (b'a' + (*c as u32 - 0x1F1E6) as u8) as char)
+            .collect();
+        if crate::flags::flag(&code).is_some() {
+            return (Some(code), it.as_str().trim_start().to_string());
+        }
+    }
+    (None, name.to_string())
+}
+
+fn flag_handle(code: &str) -> Option<svg::Handle> {
+    static CACHE: OnceLock<Mutex<HashMap<String, svg::Handle>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().ok()?;
+    if let Some(h) = map.get(code) {
+        return Some(h.clone());
+    }
+    let bytes = crate::flags::flag(code)?;
+    let h = svg::Handle::from_memory(bytes);
+    map.insert(code.to_string(), h.clone());
+    Some(h)
+}
+
+pub fn named<'a>(ctx: &Ctx, name: &str, ty: Ty, color: Color, flag_h: f32) -> El<'a> {
+    let (code, rest) = split_flag(name);
+    let label = txs(ctx, ty, rest, color);
+    match code.and_then(|c| flag_handle(&c)) {
+        Some(h) => row![svg(h).width(flag_h * 4.0 / 3.0).height(flag_h), label]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        None => label.into(),
+    }
 }

@@ -22,6 +22,19 @@ object Importer {
     private val nameKeys = listOf("remarks", "name", "title", "ps", "alias")
 
     fun prepare(text: String): Prepared {
+        val native = NativeCore.call { Native.prepareImport(text) }
+        if (native != null) {
+            val arr = native.getJSONArray("items")
+            val items = (0 until arr.length()).map {
+                val o = arr.getJSONObject(it)
+                Source(o.getString("value"), o.getBoolean("url"), o.optString("name", ""))
+            }
+            return Prepared(items, null)
+        }
+        return prepareKt(text)
+    }
+
+    private fun prepareKt(text: String): Prepared {
         val t = text.trim().removePrefix("\uFEFF")
         if (t.isEmpty()) return Prepared(emptyList(), "Пусто")
         if (t.startsWith("PK")) {

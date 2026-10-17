@@ -710,7 +710,7 @@ private fun Hero(state: AppState, onPower: () -> Unit) {
             .padding(bottom = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        PowerButton(state.status, state.launchStyle, state.powerScale, onPower)
+        PowerButton(state.status, state.launchStyle, state.powerScale, state.anim, onPower)
         val titleColor by animateColorAsState(
             if (on) scheme.primary else scheme.onSurface,
             tween(Motion.d(500)),

@@ -128,6 +128,10 @@ class AppState(private val app: Application) {
     var animSpeed by mutableIntStateOf(prefs.getInt("anim_speed", 2))
         private set
     var contrast by mutableIntStateOf(prefs.getInt("contrast", 0))
+    var tuning by mutableStateOf(Tuning.fromJson(prefs.getString("tuning", null)))
+        private set
+    var anim by mutableStateOf(AnimConfig.fromJson(prefs.getString("anim_cfg", null)))
+        private set
     var resetTick by mutableIntStateOf(0)
         private set
     var autoCheck by mutableStateOf(prefs.getBoolean("auto_check", true))
@@ -197,10 +201,12 @@ class AppState(private val app: Application) {
         }
     }
 
+    @Volatile private var stopGuardUntil = 0L
+
     fun syncExternal() {
         val saved = VpnBridge.read(app)
         val live = saved.first && VpnBridge.live(app)
-        if (live && status == Status.Off) {
+        if (live && status == Status.Off && SystemClock.elapsedRealtime() > stopGuardUntil) {
             pendingId = saved.second ?: selectedId
             goUp()
         } else if (!live && status == Status.On) {
@@ -334,6 +340,16 @@ class AppState(private val app: Application) {
         prefs.edit().putInt("launch_style", value).apply()
     }
 
+    fun changeTuning(value: Tuning) {
+        tuning = value
+        prefs.edit().putString("tuning", value.toJson()).apply()
+    }
+
+    fun changeAnim(value: AnimConfig) {
+        anim = value
+        prefs.edit().putString("anim_cfg", value.toJson()).apply()
+    }
+
     fun changeAnimSpeed(value: Int) {
         animSpeed = value
         prefs.edit().putInt("anim_speed", value).apply()
@@ -350,6 +366,8 @@ class AppState(private val app: Application) {
         changeBgStyle(0)
         changeLaunchStyle(0)
         changeAnimSpeed(2)
+        changeAnim(AnimConfig())
+        changeTuning(Tuning())
         changePowerScale(1f)
         changeTextScale(1f)
         changePingMode(0)
@@ -725,11 +743,20 @@ class AppState(private val app: Application) {
         if (status != Status.On && status != Status.Connecting) return
         update(Status.Stopping)
         pollJob?.cancel()
+        stopGuardUntil = SystemClock.elapsedRealtime() + 8000
         sendStop()
         timeoutJob?.cancel()
         timeoutJob = scope.launch {
-            delay(2500)
-            if (status == Status.Stopping) finishDown(null)
+            delay(1200)
+            if (status == Status.Stopping) sendStop()
+            delay(1500)
+            if (status == Status.Stopping) {
+                try {
+                    app.stopService(Intent(app, FasdeqVpnService::class.java))
+                } catch (e: Throwable) {
+                }
+                finishDown(null)
+            }
         }
     }
 
@@ -806,6 +833,7 @@ class AppState(private val app: Application) {
             .putExtra(FasdeqVpnService.EXTRA_CORE, Cores.activePath(app) ?: "")
             .putExtra(FasdeqVpnService.EXTRA_DNS, dnsList().joinToString(","))
             .putExtra(FasdeqVpnService.EXTRA_MTU, mtu)
+            .putExtra(FasdeqVpnService.EXTRA_TUNING, tuning.toJson())
             .putExtra(FasdeqVpnService.EXTRA_NAME, target.name)
             .putExtra(FasdeqVpnService.EXTRA_ID, target.id)
         try {
