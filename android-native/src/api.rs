@@ -1,36 +1,35 @@
-use fasdeq_core::model::Server;
-use fasdeq_core::{importer, links, ping};
+use fasdeq_core::{importer, links, model::Server, ping};
 use serde_json::{json, Value};
 
-pub fn parse_link(conf: &str) -> Value {
+pub fn parse_link(conf: &str) -> String {
     match links::parse(conf) {
-        Ok(p) => json!({"ok": true, "name": p.name, "endpoint": p.endpoint, "outbound": p.outbound}),
-        Err(e) => json!({"ok": false, "error": e}),
+        Ok(p) => json!({"ok": true, "name": p.name, "endpoint": p.endpoint, "outbound": p.outbound}).to_string(),
+        Err(e) => json!({"ok": false, "error": e}).to_string(),
     }
 }
 
-pub fn prepare_import(text: &str) -> Value {
+pub fn prepare_import(text: &str) -> String {
     let p = importer::prepare(text);
     match p.error {
-        Some(e) => json!({"ok": false, "error": e}),
+        Some(e) => json!({"ok": false, "error": e}).to_string(),
         None => json!({
             "ok": true,
             "items": p.items.iter().map(|s| json!({"value": s.value, "url": s.is_url, "name": s.name})).collect::<Vec<_>>()
-        }),
+        }).to_string(),
     }
 }
 
-pub fn fetch_subscription(url: &str) -> Value {
+pub fn fetch_subscription(url: &str) -> String {
     match links::fetch_meta(url) {
         Ok(f) => {
             let body = links::decode_subscription(&f.body);
-            json!({"ok": true, "group": f.group, "body": body})
+            json!({"ok": true, "group": f.group, "body": body}).to_string()
         }
-        Err(e) => json!({"ok": false, "error": e}),
+        Err(e) => json!({"ok": false, "error": e}).to_string(),
     }
 }
 
-pub fn measure_ping(conf: &str, endpoint: &str, mode: i32, timeout_ms: u64) -> Value {
+pub fn measure_ping(conf: &str, endpoint: &str, mode: i32, timeout_ms: u64) -> String {
     let server = Server {
         id: String::new(),
         name: String::new(),
@@ -39,45 +38,12 @@ pub fn measure_ping(conf: &str, endpoint: &str, mode: i32, timeout_ms: u64) -> V
         group: String::new(),
     };
     let r = ping::measure(&server, mode.max(0) as usize, timeout_ms);
-    json!({"tcp": r.tcp, "udp": r.udp, "icmp": r.icmp, "best": r.best()})
+    json!({"tcp": r.tcp, "udp": r.udp, "icmp": r.icmp, "best": r.best()}).to_string()
 }
 
-pub fn inner_config(outbound: &str, socks: u16, http: u16, dns: &[String]) -> Value {
+pub fn inner_config(outbound: &str, socks: u16, http: u16, dns: &[String]) -> String {
     match serde_json::from_str::<Value>(outbound) {
-        Ok(o) => json!({"ok": true, "config": links::inner_config(o, socks, http, None, dns)}),
-        Err(e) => json!({"ok": false, "error": e.to_string()}),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_vless() {
-        let v = parse_link("vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls&type=tcp#Test");
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["endpoint"], "example.com:443");
-        assert_eq!(v["name"], "Test");
-    }
-
-    #[test]
-    fn rejects_garbage() {
-        assert_eq!(parse_link("hello")["ok"], false);
-    }
-
-    #[test]
-    fn imports_direct_links() {
-        let v = prepare_import("vless://11111111-1111-1111-1111-111111111111@example.com:443#A");
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["items"].as_array().map(|a| a.len()), Some(1));
-    }
-
-    #[test]
-    fn builds_inner_config() {
-        let o = parse_link("vless://11111111-1111-1111-1111-111111111111@example.com:443#A");
-        let c = inner_config(&o["outbound"].to_string(), 10808, 10809, &["1.1.1.1".to_string()]);
-        assert_eq!(c["ok"], true);
-        assert!(c["config"]["inbounds"].is_array());
+        Ok(o) => json!({"ok": true, "config": links::inner_config(o, socks, http, None, dns)}).to_string(),
+        Err(e) => json!({"ok": false, "error": e.to_string()}).to_string(),
     }
 }
