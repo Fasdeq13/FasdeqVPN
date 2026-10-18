@@ -22,16 +22,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.webkit.WebViewAssetLoader
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class WebUiActivity : ComponentActivity() {
@@ -45,6 +44,20 @@ class WebUiActivity : ComponentActivity() {
             askBattery()
             FasdeqApp.state.connect()
         }
+        bridge.pushLater()
+    }
+
+    private var corePicked: ((Uri?) -> Unit)? = null
+
+    private val corePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val f = corePicked
+        corePicked = null
+        f?.invoke(uri)
+    }
+
+    fun pickCore(done: (Uri?) -> Unit) {
+        corePicked = done
+        corePicker.launch(arrayOf("*/*"))
     }
 
     private val batteryAsk = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
@@ -70,6 +83,7 @@ class WebUiActivity : ComponentActivity() {
         web = WebView(this)
         web.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         web.setBackgroundColor(Color.parseColor("#101414"))
+        web.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
         web.overScrollMode = WebView.OVER_SCROLL_NEVER
         web.isVerticalScrollBarEnabled = false
         web.isHorizontalScrollBarEnabled = false
@@ -125,21 +139,36 @@ class WebUiActivity : ComponentActivity() {
         web.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
 
         lifecycleScope.launch {
-            snapshotFlow { FasdeqApp.state.let { s ->
-                listOf(
-                    s.status, s.selectedId, s.rx, s.tx, s.downSpeed, s.upSpeed, s.uptime, s.error,
-                    s.servers.toList(), s.groups.toList(), s.pings.toMap(),
-                    s.themeMode, s.dynamicColors, s.amoled, s.autoConnect, s.dnsPreset, s.dnsCustom, s.mtu,
-                    s.pingMode, s.pingTimeout, s.autoPing, s.sortPing, s.tuning
-                ).hashCode()
-            } }
-                .distinctUntilChanged()
-                .conflate()
-                .collect {
-                    bridge.push()
-                    delay(60)
-                }
+            Updates.check(this@WebUiActivity, false)
         }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var last = 0
+                var first = true
+                while (true) {
+                    val h = stateHash()
+                    if (first || h != last) {
+                        first = false
+                        last = h
+                        bridge.push()
+                    }
+                    delay(120)
+                }
+            }
+        }
+    }
+
+    private fun stateHash(): Int {
+        val s = FasdeqApp.state
+        return listOf(
+            s.status, s.selectedId, s.rx, s.tx, s.downSpeed, s.upSpeed, s.uptime, s.error,
+            s.servers.toList(), s.groups.toList(), s.pings.toMap(), s.checks.toMap(), s.checkingServices,
+            s.themeMode, s.dynamicColors, s.amoled, s.autoConnect, s.dnsPreset, s.dnsCustom, s.mtu,
+            s.pingMode, s.pingTimeout, s.autoPing, s.sortPing, s.tuning,
+            s.cores.toList(), s.activeCore, s.coreBusy, s.releases, s.autoCheck, s.checkInterval,
+            Updates.state.hashCode()
+        ).hashCode()
     }
 
     private fun applyInsets() {

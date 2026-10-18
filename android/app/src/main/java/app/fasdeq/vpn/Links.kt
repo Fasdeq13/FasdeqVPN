@@ -533,7 +533,7 @@ object Links {
             val o = JSONObject().put("publicKey", pub).put("endpoint", ep)
             val psk = p["presharedkey"] ?: ""
             if (psk.isNotEmpty()) o.put("preSharedKey", psk)
-            o.put("keepAlive", p["persistentkeepalive"]?.toIntOrNull() ?: 0)
+            o.put("keepAlive", (p["persistentkeepalive"]?.toIntOrNull() ?: 0).let { if (it in 1..60) it else 25 })
             val allowed = list(p["allowedips"] ?: "").ifEmpty { listOf("0.0.0.0/0", "::/0") }
             o.put("allowedIPs", JSONArray(allowed))
             peerArray.put(o)
@@ -542,7 +542,7 @@ object Links {
             .put("secretKey", key)
             .put("address", JSONArray(addresses))
             .put("peers", peerArray)
-            .put("mtu", iface["mtu"]?.toIntOrNull() ?: 1280)
+            .put("mtu", (iface["mtu"]?.toIntOrNull() ?: 1280).coerceIn(1200, 1420))
             .put("noKernelTun", true)
         val out = JSONObject().put("protocol", "wireguard").put("settings", settings)
         return Parsed("", endpoint, out)

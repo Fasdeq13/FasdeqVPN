@@ -724,7 +724,8 @@ fn parse_interface(text: &str) -> Res<Parsed> {
         if !psk.is_empty() {
             o["preSharedKey"] = json!(psk);
         }
-        o["keepAlive"] = json!(get(p, "persistentkeepalive").parse::<i64>().unwrap_or(0));
+        let ka = get(p, "persistentkeepalive").parse::<i64>().unwrap_or(0);
+        o["keepAlive"] = json!(if (1..=60).contains(&ka) { ka } else { 25 });
         let mut allowed = list(get(p, "allowedips"));
         if allowed.is_empty() {
             allowed = vec!["0.0.0.0/0".into(), "::/0".into()];
@@ -736,7 +737,7 @@ fn parse_interface(text: &str) -> Res<Parsed> {
         "secretKey": key,
         "address": addresses,
         "peers": peer_array,
-        "mtu": iface.get("mtu").and_then(|v| v.parse::<i64>().ok()).unwrap_or(1280),
+        "mtu": iface.get("mtu").and_then(|v| v.parse::<i64>().ok()).unwrap_or(1280).clamp(1200, 1420),
         "noKernelTun": true
     });
     Ok(Parsed {

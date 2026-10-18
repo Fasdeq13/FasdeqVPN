@@ -52,6 +52,9 @@
     pings: { s1: { ms: 38 }, s2: { ms: 61 }, s3: { ms: 112 }, s4: { ms: 284 }, s5: { ms: null } },
     groups: [{ name: "Основная", url: "https://example.com/sub" }, { name: "Запасные", url: "" }],
     settings: {},
+    services: { names: ["Discord", "Telegram", "YouTube"], checking: false, checks: {}, best: [] },
+    cores: { active: "", builtin: "25.9.11", busy: null, list: [{ id: "c1", label: "Xray 25.8.3", version: "25.8.3" }], releases: null },
+    update: { available: true, checking: false, tag: "v1.8", url: "https://github.com/Fasdeq13/FasdeqVPN/releases/", notes: "Новый интерфейс, проверка сервисов", current: "1.7" },
   };
   let timer = null;
   let ticker = null;
@@ -135,6 +138,30 @@
           if (!S.servers.some((s) => s.id === S.selected)) S.selected = S.servers[0] ? S.servers[0].id : null;
           push();
           break;
+        case "checkServices":
+          S.services.checking = true;
+          S.servers.forEach((x) => { S.services.checks[x.id] = { ms: [null, null, null], busy: true }; });
+          push();
+          setTimeout(() => {
+            S.servers.forEach((x) => { S.services.checks[x.id] = { ms: [0, 1, 2].map(() => (Math.random() < 0.2 ? -1 : Math.round(80 + Math.random() * 500))), busy: false }; });
+            S.services.checking = false;
+            S.services.best = [0, 1, 2].map((i) => { let b = null, m = 1e9; S.servers.forEach((x) => { const v = S.services.checks[x.id].ms[i]; if (v > 0 && v < m) { m = v; b = x.id; } }); return b; });
+            push();
+          }, 1200);
+          break;
+        case "selectCore": S.cores.active = payload; push(); break;
+        case "deleteCore": S.cores.list = S.cores.list.filter((c) => c.id !== payload); if (S.cores.active === payload) S.cores.active = ""; push(); break;
+        case "pickCore": return Promise.resolve({});
+        case "loadReleases":
+          S.cores.busy = "Загружаю список версий…"; push();
+          return new Promise((r) => setTimeout(() => { S.cores.busy = null; S.cores.releases = [{ tag: "v25.9.11", size: 14000000 }, { tag: "v25.8.3", size: 13800000 }, { tag: "v25.7.26", size: 13700000 }]; push(); r({}); }, 600));
+        case "downloadCore": return Promise.resolve({});
+        case "checkUpdate": return Promise.resolve({ available: S.update.available, tag: S.update.tag });
+        case "dismissUpdate": S.update.available = false; push(); break;
+        case "renameServer": { const x = S.servers.find((q) => q.id === payload.id); if (x) x.name = payload.name; push(); break; }
+        case "renameGroup": S.servers.forEach((x) => { if (x.group === payload.old) x.group = payload.name; }); S.groups.forEach((g) => { if (g.name === payload.old) g.name = payload.name; }); push(); break;
+        case "clearGroup": break;
+        case "open": return Promise.resolve({});
         case "switchUi":
           return Promise.resolve({});
         case "clipboard":

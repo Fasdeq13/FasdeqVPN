@@ -603,6 +603,7 @@ fun PingPill(result: PingResult?, onClick: () -> Unit) {
                     result.tcp?.let { Text(pingText("TCP", it), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                     result.udp?.let { Text(pingText("UDP", it), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                     result.icmp?.let { Text(pingText("ICMP", it), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                    result.tun?.let { Text(pingText("Туннель", it), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                 }
             }
         }

@@ -365,6 +365,7 @@ class FasdeqVpnService : VpnService() {
                     coreFd = fd
                     core.startLoop(config, fd)
                     connectedAt = System.currentTimeMillis()
+                    if (outbound.optString("protocol") == "wireguard") watchdog(gen, core)
                     acquireWake()
                     VpnBridge.write(this, true, serverId)
                     VpnBridge.send(this, true, null)
@@ -379,6 +380,29 @@ class FasdeqVpnService : VpnService() {
                     stopForegroundCompat()
                     stopSelf()
                 }
+            }
+        }.start()
+    }
+
+    private fun watchdog(gen: Int, core: CoreController) {
+        Thread {
+            var misses = 0
+            try {
+                Thread.sleep(20_000L)
+                while (gen == generation && !stopping && !halted && !userStop) {
+                    val ok = try {
+                        core.measureDelay("https://www.gstatic.com/generate_204") > 0
+                    } catch (e: Throwable) {
+                        false
+                    }
+                    if (ok) misses = 0 else misses++
+                    if (misses >= 2) {
+                        if (gen == generation && !stopping) recover("WireGuard перестал отвечать, переподключаю")
+                        return@Thread
+                    }
+                    Thread.sleep(if (misses > 0) 5_000L else 25_000L)
+                }
+            } catch (e: Throwable) {
             }
         }.start()
     }

@@ -57,6 +57,11 @@ class WebBridge(private val host: WebUiActivity) {
         host.runJs("window.__fasdeqResult(" + id + "," + JSONObject.quote(value.toString()) + ")")
     }
 
+    fun pushLater() {
+        main.postDelayed({ push() }, 300)
+        main.postDelayed({ push() }, 1200)
+    }
+
     fun push() {
         host.runJs("window.__fasdeqPush(" + JSONObject.quote(snapshot()) + ")")
     }
@@ -77,10 +82,12 @@ class WebBridge(private val host: WebUiActivity) {
             "connect" -> {
                 host.requestConnect()
                 reply(id)
+                pushLater()
             }
             "disconnect" -> {
                 app.disconnect()
                 reply(id)
+                pushLater()
             }
             "select" -> {
                 app.select(text)
@@ -94,13 +101,81 @@ class WebBridge(private val host: WebUiActivity) {
                 app.removeGroup(text)
                 reply(id)
             }
-            "ping" -> {
-                app.pingAll()
+            "ping" -> host.lifecycleScope.launch {
+                app.pingAll().join()
                 reply(id)
+                push()
             }
-            "pingGroup" -> {
-                app.pingGroup(text)
+            "pingGroup" -> host.lifecycleScope.launch {
+                app.pingGroup(text).join()
                 reply(id)
+                push()
+            }
+            "checkServices" -> {
+                app.checkServices()
+                reply(id)
+                push()
+            }
+            "selectCore" -> {
+                app.selectCore(text)
+                reply(id)
+                push()
+            }
+            "deleteCore" -> {
+                app.deleteCore(text)
+                reply(id)
+                push()
+            }
+            "pickCore" -> host.pickCore { uri ->
+                if (uri == null) {
+                    reply(id, JSONObject().put("cancel", true))
+                } else {
+                    host.lifecycleScope.launch {
+                        val label = displayName(host, uri).substringBeforeLast('.')
+                        val error = app.importCore(uri, label)
+                        reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                        push()
+                    }
+                }
+            }
+            "loadReleases" -> host.lifecycleScope.launch {
+                val error = app.loadReleases()
+                reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                push()
+            }
+            "downloadCore" -> host.lifecycleScope.launch {
+                val release = app.releases?.firstOrNull { it.tag == text }
+                val error = if (release == null) "Версия не найдена" else app.downloadCore(release)
+                reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                push()
+            }
+            "checkUpdate" -> host.lifecycleScope.launch {
+                Updates.check(host, true)
+                val st = Updates.state
+                reply(id, JSONObject().put("available", st.available).put("tag", st.tag).put("error", st.error ?: JSONObject.NULL))
+                push()
+            }
+            "dismissUpdate" -> {
+                Updates.skip(host, text)
+                reply(id)
+                push()
+            }
+            "renameServer" -> {
+                val o = value as JSONObject
+                app.renameServer(o.getString("id"), o.getString("name"))
+                reply(id)
+                push()
+            }
+            "renameGroup" -> {
+                val o = value as JSONObject
+                val error = app.renameGroup(o.getString("old"), o.getString("name"))
+                reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                push()
+            }
+            "clearGroup" -> {
+                app.clearGroup(text)
+                reply(id)
+                push()
             }
             "add" -> host.lifecycleScope.launch {
                 val before = app.servers.size
@@ -108,12 +183,14 @@ class WebBridge(private val host: WebUiActivity) {
                 val out = JSONObject().put("added", maxOf(0, app.servers.size - before))
                 if (error != null) out.put("error", error)
                 reply(id, out)
+                push()
             }
             "refreshGroup" -> host.lifecycleScope.launch {
                 val error = app.refreshGroup(text)
                 val out = JSONObject()
                 if (error != null) out.put("error", error)
                 reply(id, out)
+                push()
             }
             "clipboard" -> reply(id, JSONObject().put("text", clipboard()))
             "haptic" -> {
@@ -167,6 +244,8 @@ class WebBridge(private val host: WebUiActivity) {
             "pingTimeout" -> st.changePingTimeout(int(v))
             "autoPing" -> st.changeAutoPing(bool(v))
             "sortPing" -> st.changeSortPing(bool(v))
+            "autoCheck" -> st.changeAutoCheck(bool(v))
+            "checkInterval" -> st.changeCheckInterval(((v as? Number)?.toFloat()) ?: 60f)
             else -> {
                 if (path.startsWith("tuning.")) {
                     val json = JSONObject(st.tuning.toJson())
@@ -290,7 +369,54 @@ class WebBridge(private val host: WebUiActivity) {
         settings.put("autoPing", st.autoPing)
         settings.put("sortPing", st.sortPing)
         settings.put("tuning", JSONObject(st.tuning.toJson()))
+        settings.put("autoCheck", st.autoCheck)
+        settings.put("checkInterval", st.checkInterval.toDouble())
         o.put("settings", settings)
+
+        val checks = JSONObject()
+        for (s in st.servers) {
+            val c = st.checks[s.id] ?: continue
+            val arr = JSONArray()
+            for (v in c.ms) arr.put(v ?: JSONObject.NULL)
+            checks.put(s.id, JSONObject().put("ms", arr).put("busy", c.busy))
+        }
+        val best = JSONArray()
+        for (i in Services.names.indices) best.put(st.bestFor(i) ?: JSONObject.NULL)
+        o.put(
+            "services",
+            JSONObject()
+                .put("names", JSONArray(Services.names))
+                .put("checking", st.checkingServices)
+                .put("checks", checks)
+                .put("best", best)
+        )
+
+        val coreList = JSONArray()
+        for (c in st.cores) coreList.put(JSONObject().put("id", c.id).put("label", c.label).put("version", c.version))
+        val rel = st.releases
+        val relArr = JSONArray()
+        rel?.take(12)?.forEach { relArr.put(JSONObject().put("tag", it.tag).put("size", it.size)) }
+        o.put(
+            "cores",
+            JSONObject()
+                .put("active", st.activeCore)
+                .put("builtin", st.builtinVersion)
+                .put("busy", st.coreBusy ?: JSONObject.NULL)
+                .put("list", coreList)
+                .put("releases", if (rel == null) JSONObject.NULL else relArr)
+        )
+
+        val up = Updates.state
+        o.put(
+            "update",
+            JSONObject()
+                .put("available", up.available)
+                .put("checking", up.checking)
+                .put("tag", up.tag)
+                .put("url", up.url)
+                .put("notes", up.notes)
+                .put("current", up.current)
+        )
         return o.toString()
     }
 }

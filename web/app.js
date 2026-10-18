@@ -13,6 +13,11 @@
     bolt: "M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z",
     chevron: "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
     refresh: "M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z",
+    edit: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 000-1.41l-2.34-2.34a.996.996 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
+    cpu: "M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z",
+    download: "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z",
+    check: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
+    info: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
     close: "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
   };
 
@@ -73,6 +78,7 @@
     accent: { r: 64, g: 216, b: 208 },
     anim: { all: true, pages: true, controls: true, sheets: true, enabled: true, speed: 1, intensity: 1, tempo: 1, burst: true, waves: 3, idle: true, iconFx: true, press: true, haptics: true, glow: 1 },
     button: { size: 224, lobes: 10, shape: 0 },
+    textScale: 1, autoCheck: true, checkInterval: 60, updates: { auto: true },
     autoConnect: false, dns: 0, dnsCustom: "", mtu: 1500,
     pingMode: 0, pingTimeout: 1, autoPing: false, sortPing: true,
     tuning: { ipv6: true, log: 2, sniff: false, lan: false, quic: false, ds: 0, am: 0, apps: "", unm: false, rc: true, rt: 3, rd: 2, idle: 300, buf: 0, mux: false, muxc: 8 },
@@ -114,17 +120,21 @@
   const THEME_KEYS = ["--primary", "--on-primary", "--primary-container", "--on-primary-container", "--secondary-container", "--on-secondary-container", "--tertiary",
     "--surface", "--sc-low", "--sc", "--sc-high", "--sc-highest", "--on-surface", "--on-surface-variant", "--outline", "--outline-variant", "--accent-text"];
 
+  let themeKey = "", barsDark = null;
   function applyTheme() {
     const st = S.settings;
+    const key = JSON.stringify([st.theme, st.dynamic, st.amoled, st.tint, st.accent, S.dark, S.colors]);
+    if (key === themeKey) return;
+    themeKey = key;
     const sysDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     const dark = st.theme === 1 ? false : st.theme === 2 ? true : (S.dark !== undefined ? S.dark : sysDark);
     document.body.classList.toggle("light", !dark);
-    Bridge.bars(dark);
+    if (barsDark !== dark) { barsDark = dark; Bridge.bars(dark); }
     document.body.classList.toggle("amoled", dark && !!st.amoled);
     const root = document.documentElement.style;
     const set = (k, v) => root.setProperty(k, v);
-    THEME_KEYS.forEach((k) => root.removeProperty(k));
     if (st.dynamic && S.colors && S.colors.length === 8) {
+      THEME_KEYS.forEach((k) => root.removeProperty(k));
       const c = S.colors.map((x) => "#" + (x & 0xffffff).toString(16).padStart(6, "0"));
       set("--primary", c[0]); set("--on-primary", c[1]); set("--primary-container", c[2]); set("--on-primary-container", c[3]);
       set("--secondary-container", c[4]); set("--on-secondary-container", c[5]); set("--tertiary", c[6]);
@@ -158,8 +168,12 @@
     set("--tertiary", "oklch(" + (dark ? 0.8 : 0.5) + " " + (grey ? 0 : 0.1) + " " + ((H + 60) % 360).toFixed(1) + ")");
   }
 
+  let motionKey = "";
   function applyMotionFlags() {
     const a = S.settings.anim;
+    const mk = JSON.stringify([a, S.settings.button, S.settings.textScale]);
+    if (mk === motionKey) return;
+    motionKey = mk;
     const b = document.body.classList;
     b.toggle("no-motion", !a.all);
     b.toggle("no-pages", !a.pages);
@@ -167,6 +181,7 @@
     b.toggle("no-sheets", !a.sheets);
     b.toggle("no-burst", !a.burst || !a.enabled || !a.all);
     const root = document.documentElement.style;
+    root.setProperty("--ts", String(clamp(Number(S.settings.textScale) || 1, 0.7, 1.6)));
     root.setProperty("--tempo", String(clamp(a.tempo, 0.2, 3)));
     root.setProperty("--k", String(1 / clamp(a.speed, 0.25, 3)));
     root.setProperty("--glow", String(a.all ? clamp(a.glow, 0, 1) : clamp(a.glow, 0, 1)));
@@ -176,24 +191,34 @@
   }
 
   const Power = (() => {
-    const POINTS = 160;
+    const POINTS = 96;
     const V = { on: 0, busy: 0, press: 0, phase: 0, idle: 0, t: 0 };
-    let shape, icon_, root, raf = 0, last = 0, pressing = false;
+    let hold = 0, shape, shape2, icon_, iconLit, iconWrap, root, raf = 0, last = 0, pressing = false;
 
     function build() {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("class", "shape");
       svg.setAttribute("viewBox", "-112 -112 224 224");
-      shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      svg.append(shape);
-      const ic = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      ic.setAttribute("class", "icon");
-      ic.setAttribute("viewBox", "0 0 24 24");
-      const ip = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      ip.setAttribute("d", ICONS.power);
-      ic.append(ip);
-      icon_ = ic;
-      root = h("button", { class: "power", "aria-label": "Подключить или отключить" }, svg, ic);
+      const NS = "http://www.w3.org/2000/svg";
+      shape = document.createElementNS(NS, "path");
+      shape.setAttribute("class", "fill-base");
+      shape2 = document.createElementNS(NS, "path");
+      shape2.setAttribute("class", "fill-on");
+      svg.append(shape, shape2);
+      const mk = (cls) => {
+        const ic = document.createElementNS(NS, "svg");
+        ic.setAttribute("class", "icon " + cls);
+        ic.setAttribute("viewBox", "0 0 24 24");
+        const ip = document.createElementNS(NS, "path");
+        ip.setAttribute("d", ICONS.power);
+        ic.append(ip);
+        return ic;
+      };
+      icon_ = mk("base");
+      iconLit = mk("lit");
+      const wrap = h("div", { class: "icon-wrap", style: "position:relative;width:84px;height:84px" }, icon_, iconLit);
+      iconWrap = wrap;
+      root = h("button", { class: "power", "aria-label": "Подключить или отключить" }, svg, wrap);
       const down = () => { pressing = true; kick(); };
       const up = () => { pressing = false; kick(); };
       root.addEventListener("pointerdown", down);
@@ -240,20 +265,24 @@
         else r = R * (1 + amp * Math.cos(N * a + ph));
         d += (i ? "L" : "M") + (Math.cos(a) * r).toFixed(2) + " " + (Math.sin(a) * r).toFixed(2);
       }
-      shape.setAttribute("d", d + "Z");
+      d += "Z";
+      shape.setAttribute("d", d);
+      shape2.setAttribute("d", d);
       const mix = clamp(V.on, 0, 1);
-      shape.style.fill = "color-mix(in oklab, var(--primary) " + (mix * 100).toFixed(1) + "%, var(--sc-highest))";
-      icon_.style.color = "color-mix(in oklab, var(--on-primary) " + (mix * 100).toFixed(1) + "%, var(--on-surface-variant))";
+      shape2.style.opacity = mix.toFixed(3);
+      iconLit.style.opacity = mix.toFixed(3);
+      icon_.style.opacity = (1 - mix).toFixed(3);
       let scale = 1, rot = 0;
       if (on && c.iconFx) {
         scale = 1 - 0.07 * V.busy + 0.05 * V.on;
         rot = Math.sin(V.t * 5 * c.tempo) * 7 * V.busy;
       }
-      icon_.style.transform = "rotate(" + rot.toFixed(2) + "deg) scale(" + scale.toFixed(3) + ")";
+      iconWrap.style.transform = "rotate(" + rot.toFixed(2) + "deg) scale(" + scale.toFixed(3) + ")";
     }
 
     function frame(now) {
       raf = 0;
+      if (hold > now) { raf = requestAnimationFrame(frame); last = now; return; }
       const dt = clamp((now - last) / 1000 || 0.016, 0.001, 0.05);
       last = now;
       const c = cfg();
@@ -284,14 +313,19 @@
       if (cfg().haptics) Bridge.act("haptic", S.status === "Off" ? "strong" : "light");
       if (S.status === "Off") {
         if (!S.selected) { snack("Сначала добавьте сервер"); go("servers"); return; }
-        Bridge.act("connect");
+        S.status = "Connecting";
+        updateHome();
+        Bridge.act("connect").then(() => setTimeout(syncNow, 700));
       } else if (S.status === "On" || S.status === "Connecting") {
-        Bridge.act("disconnect");
+        S.status = "Stopping";
+        updateHome();
+        Bridge.act("disconnect").then(() => setTimeout(syncNow, 700));
       }
     }
 
     document.addEventListener("visibilitychange", () => { if (!document.hidden) kick(); });
-    return { build, kick };
+    function pause(ms) { hold = performance.now() + ms; }
+    return { build, kick, pause };
   })();
 
   function snack(text) {
@@ -314,9 +348,14 @@
     });
     $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.go === name));
     current = name;
+    Power.pause(380);
     $("#fab") && $("#fab").classList.toggle("hide", name !== "servers");
     if (name === "home") Power.kick();
     void from;
+  }
+
+  async function syncNow() {
+    try { onState(await Bridge.state()); } catch (e) {}
   }
 
   const home = {};
@@ -329,6 +368,8 @@
     home.name = h("div", { class: "name" }, "");
     home.meta = h("div", { class: "body" }, "");
     home.card.append(home.avatar, h("div", { class: "grow" }, home.name, home.meta), icon("chevron"));
+    home.svc = h("div", { class: "svc-card" });
+    home.svcSig = "";
     home.down = h("b", {}, "0 Б/с");
     home.up = h("b", {}, "0 Б/с");
     home.time = h("b", {}, "00:00");
@@ -337,6 +378,7 @@
       h("div", { class: "home-head" }, h("h1", { class: "headline" }, home.word), home.sub),
       h("div", { class: "stage" }, h("div", { class: "rings" }, [0, 1, 2, 3, 4].map((n) => h("i", { class: "ring", style: "--i:" + n }))), Power.build()),
       home.card,
+      home.svc,
       h("div", { class: "stats" }, stat("down", "Загрузка", home.down), stat("up", "Отдача", home.up), stat("clock", "В сети", home.time))
     );
   }
@@ -360,7 +402,37 @@
     home.down.textContent = fmtBytes(S.down) + "/с";
     home.up.textContent = fmtBytes(S.up) + "/с";
     home.time.textContent = fmtTime(S.uptime);
+    renderSvc();
     Power.kick();
+  }
+
+  const SVC_COLORS = ["#5865F2", "#27A7E7", "#FF0033"];
+  const SVC_LETTERS = ["D", "T", "Y"];
+  function serverName(id) {
+    const x = S.servers.find((q) => q.id === id);
+    return x ? x.name : "";
+  }
+  function renderSvc() {
+    const sv = S.selected;
+    const sig = JSON.stringify([S.services, sv, S.servers.length]);
+    if (sig === home.svcSig) return;
+    home.svcSig = sig;
+    const checking = !!S.services.checking;
+    const c = sv ? checkOf(sv) : { ms: [null, null, null], busy: false };
+    const btn = h("button", { class: "btn tonal sm" + (checking ? " busy" : ""), onclick: () => { if (!S.servers.length) { snack("Сначала добавьте сервер"); return; } Bridge.act("checkServices"); } }, icon(checking ? "refresh" : "bolt"), checking ? "Проверяю…" : "Проверить");
+    const cells = S.services.names.map((n, i) => {
+      const v = c.ms[i];
+      const text = c.busy && v == null ? "…" : v == null ? "—" : v > 0 ? v + " мс" : "нет";
+      const cls = v != null && v > 0 ? (v < 400 ? "ok" : "slow") : v != null ? "bad" : "";
+      const bestId = S.services.best[i];
+      const better = bestId && bestId !== sv;
+      return h("div", { class: "svc-cell" },
+        h("div", { class: "svc-logo", style: "background:" + SVC_COLORS[i] }, SVC_LETTERS[i]),
+        h("div", { class: "svc-name" }, n),
+        h("div", { class: "svc-ms " + cls }, text),
+        better ? h("button", { class: "svc-best", onclick: () => Bridge.act("select", bestId) }, "лучший: " + serverName(bestId)) : h("div", { class: "svc-best none" }, bestId && bestId === sv ? "лучший" : ""));
+    });
+    home.svc.replaceChildren(h("div", { class: "svc-head" }, h("div", { class: "title" }, "Сервисы"), btn), h("div", { class: "svc-grid" }, cells));
   }
 
   function pingOf(id) {
@@ -387,18 +459,44 @@
     return g ? g.url : "";
   }
 
-  const srv = { busy: false };
+  const srv = { local: false, sig: "" };
+  function pingBusy() { return srv.local || Object.keys(S.pings || {}).some((k) => pingOf(k).busy); }
+  function checkOf(id) {
+    const c = S.services && S.services.checks ? S.services.checks[id] : null;
+    return c || { ms: [null, null, null], busy: false };
+  }
+  function dotsFor(id) {
+    const c = checkOf(id);
+    const names = S.services.names;
+    return h("span", { class: "dots", title: names.join(", ") }, [0, 1, 2].map((i) => {
+      const v = c.ms[i];
+      const cls = c.busy && v == null ? "busy" : v == null ? "" : v > 0 ? (v < 400 ? "ok" : "slow") : "bad";
+      return h("i", { class: "dot " + cls });
+    }));
+  }
+  function renameSheet(title, current, onSave) {
+    const input = h("input", { class: "hex wide", value: current, spellcheck: "false", maxlength: 60 });
+    const ok = h("button", { class: "btn filled", onclick: () => { const t = input.value.trim(); if (!t) return; closeSheet(); onSave(t); } }, "Сохранить");
+    openSheet(h("div", {}, h("h2", {}, title), h("div", { style: "margin:16px 0" }, input), h("div", { class: "actions" }, h("button", { class: "btn text", onclick: closeSheet }, "Отмена"), ok)));
+    setTimeout(() => input.focus(), 350);
+  }
   function renderServers() {
+    const sig = JSON.stringify([S.servers, S.groups, S.selected, S.pings, S.settings.sortPing, S.services, pingBusy()]);
+    if (sig === srv.sig) return;
+    srv.sig = sig;
     const v = $("#view-servers");
     const keep = v.scrollTop;
     v.replaceChildren();
-    const pingBtn = h("button", { class: "btn tonal" + (srv.busy ? " busy" : ""), onclick: async () => {
-      if (srv.busy) return;
-      srv.busy = true; renderServers();
+    const busy = pingBusy();
+    const pingBtn = h("button", { class: "btn tonal" + (busy ? " busy" : ""), onclick: async () => {
+      if (pingBusy()) return;
+      srv.local = true; srv.sig = ""; renderServers();
       await Bridge.act("ping");
-      srv.busy = false; renderServers();
-    } }, icon("bolt"), srv.busy ? "Проверяю…" : "Проверить пинг");
-    v.append(h("div", { class: "top-row" }, h("h1", { class: "headline" }, "Серверы"), pingBtn));
+      srv.local = false; srv.sig = ""; renderServers();
+    } }, icon(busy ? "refresh" : "bolt"), busy ? "Проверяю…" : "Проверить пинг");
+    const chk = !!S.services.checking;
+    const svcBtn = h("button", { class: "btn tonal" + (chk ? " busy" : ""), onclick: () => { if (!S.services.checking && S.servers.length) Bridge.act("checkServices"); } }, icon(chk ? "refresh" : "check"), chk ? "Проверяю…" : "Сервисы");
+    v.append(h("div", { class: "top-row two" }, h("h1", { class: "headline" }, "Серверы"), h("div", { class: "tools" }, svcBtn, pingBtn)));
     if (!S.servers.length) {
       v.append(h("div", { class: "empty" }, h("div", { class: "title-large" }, "Серверов пока нет"), h("div", { class: "body" }, "Вставьте ссылку vless://, trojan://, ss:// или адрес подписки")));
     }
@@ -408,27 +506,43 @@
       const list = groups[g].slice();
       if (S.settings.sortPing) list.sort((x, y) => sortKey(x.id) - sortKey(y.id));
       const actions = h("div", { class: "group-actions" },
-        h("button", { class: "icon-btn sm", "aria-label": "Проверить пинг группы", onclick: () => Bridge.act("pingGroup", g) }, icon("bolt")),
+        h("button", { class: "icon-btn sm", "aria-label": "Проверить пинг группы", onclick: () => { Bridge.act("pingGroup", g); } }, icon("bolt")),
+        g ? h("button", { class: "icon-btn sm", "aria-label": "Переименовать группу", onclick: () => renameSheet("Название группы", g, async (t) => { const r = await Bridge.act("renameGroup", { old: g, name: t }); if (r && r.error) snack(r.error); }) }, icon("edit")) : null,
         g && groupUrl(g) ? h("button", { class: "icon-btn sm", "aria-label": "Обновить подписку", onclick: async () => { const r = await Bridge.act("refreshGroup", g); snack(r && r.error ? r.error : "Подписка обновлена"); } }, icon("refresh")) : null,
         g ? h("button", { class: "icon-btn sm", "aria-label": "Удалить группу", onclick: () => { Bridge.act("removeGroup", g); snack("Группа удалена"); } }, icon("del")) : null);
       v.append(h("div", { class: "group-title" }, h("span", {}, g || "Мои серверы"), actions));
       v.append(h("div", { class: "list" }, list.map((s) => h("button", { class: "row" + (s.id === S.selected ? " selected" : ""), onclick: () => Bridge.act("select", s.id) },
         h("div", { class: "avatar" }, Array.from(s.name)[0].toUpperCase()),
         h("div", { class: "grow" }, h("div", { class: "t" }, s.name), h("div", { class: "s" }, s.proto + " · " + s.endpoint)),
-        pingChip(s.id),
+        h("div", { class: "side" }, pingChip(s.id), dotsFor(s.id)),
+        h("span", { class: "icon-btn", role: "button", "aria-label": "Переименовать", onclick: (e) => { e.stopPropagation(); renameSheet("Название сервера", s.name, (t) => Bridge.act("renameServer", { id: s.id, name: t })); } }, icon("edit")),
         h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("remove", s.id); snack("Сервер удалён"); } }, icon("del"))
       ))));
     });
     v.scrollTop = keep;
   }
 
+  let liveRender = null;
+  function openLive(render) {
+    openSheet(render());
+    liveRender = render;
+  }
+  function refreshLive() {
+    if (!liveRender || !$("#sheet").classList.contains("show")) return;
+    const sh = $("#sheet");
+    const top = sh.scrollTop;
+    sh.replaceChildren(h("div", { class: "grab" }), liveRender());
+    sh.scrollTop = top;
+  }
   function openSheet(content) {
+    liveRender = null;
     const sh = $("#sheet");
     sh.replaceChildren(h("div", { class: "grab" }), content);
     $("#scrim").classList.add("show");
     requestAnimationFrame(() => requestAnimationFrame(() => sh.classList.add("show")));
   }
   function closeSheet() {
+    liveRender = null;
     $("#sheet").classList.remove("show");
     $("#scrim").classList.remove("show");
   }
@@ -450,8 +564,66 @@
       h("div", { class: "actions" }, paste, h("button", { class: "btn text", onclick: closeSheet }, "Отмена"), ok)));
   }
 
+  const coreUi = { rel: false, msg: "" };
+  function fmtMb(n) { return (Number(n) / 1048576).toFixed(1) + " МБ"; }
+  function openCores() {
+    coreUi.msg = "";
+    openLive(() => {
+      const C = S.cores;
+      const busy = !!C.busy;
+      const coreRow = (selected, title, sub, onSelect, onDelete) => h("button", { class: "row" + (selected ? " selected" : ""), onclick: onSelect },
+        h("div", { class: "avatar" }, selected ? icon("check") : icon("cpu")),
+        h("div", { class: "grow" }, h("div", { class: "t" }, title), sub ? h("div", { class: "s" }, sub) : null),
+        onDelete ? h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить ядро", onclick: (e) => { e.stopPropagation(); onDelete(); } }, icon("del")) : null);
+      const rows = [coreRow(!C.active, "Встроенное", C.builtin ? "Xray " + C.builtin : "Идёт в комплекте с приложением", () => Bridge.act("selectCore", ""), null)];
+      C.list.forEach((c) => rows.push(coreRow(C.active === c.id, c.label, c.version ? "Xray " + c.version : "", () => Bridge.act("selectCore", c.id), () => Bridge.act("deleteCore", c.id))));
+      const relList = C.releases === null || C.releases === undefined
+        ? h("div", { class: "body" }, "Список версий загружается…")
+        : h("div", { class: "list" }, C.releases.map((r) => h("div", { class: "row" },
+          h("div", { class: "grow" }, h("div", { class: "t" }, r.tag), h("div", { class: "s" }, fmtMb(r.size))),
+          h("button", { class: "btn tonal", disabled: busy, onclick: async () => { const x = await Bridge.act("downloadCore", r.tag); coreUi.msg = x && x.error ? x.error : "Ядро " + r.tag + " установлено и выбрано"; refreshLive(); } }, icon("download"), "Скачать"))));
+      const out = h("div", {},
+        h("h2", {}, "Ядро Xray"),
+        h("div", { class: "body" }, "Своё ядро запускается отдельным процессом: встроенное создаёт туннель и отправляет трафик в запущенный Xray. Нужен исполняемый файл Xray для Android (arm64) или zip с ним. Применяется при следующем подключении."),
+        busy ? h("div", { class: "busy-line" }, h("div", { class: "bar" }), h("div", { class: "body" }, C.busy)) : null,
+        h("div", { class: "group-title" }, h("span", {}, "Активное ядро")),
+        h("div", { class: "list" }, rows),
+        h("div", { class: "actions split" },
+          h("button", { class: "btn tonal", disabled: busy, onclick: async () => { const x = await Bridge.act("pickCore"); if (x && x.cancel) return; coreUi.msg = x && x.error ? x.error : "Ядро добавлено"; refreshLive(); } }, icon("add"), "Из файла"),
+          h("button", { class: "btn tonal", disabled: busy, onclick: async () => { coreUi.rel = !coreUi.rel; if (coreUi.rel && !S.cores.releases) { const x = await Bridge.act("loadReleases"); if (x && x.error) coreUi.msg = x.error; } refreshLive(); } }, icon("download"), "Скачать версию")),
+        coreUi.rel ? [h("div", { class: "group-title" }, h("span", {}, "Версии Xray-core")), relList] : null,
+        coreUi.msg ? h("div", { class: "msg" }, coreUi.msg) : null);
+      return out;
+    });
+  }
+
+  let shownUpdate = "";
+  function openUpdate() {
+    const u = S.update;
+    shownUpdate = u.tag;
+    openSheet(h("div", {},
+      h("h2", {}, "Доступна новая версия"),
+      h("div", { class: "body" }, "Установлена " + (u.current || "—") + ", на GitHub вышла " + u.tag + "."),
+      u.notes ? h("div", { class: "notes" }, u.notes) : null,
+      h("div", { class: "actions" },
+        h("button", { class: "btn text", onclick: () => { closeSheet(); Bridge.act("dismissUpdate", u.tag); } }, "Позже"),
+        h("button", { class: "btn filled", onclick: () => { closeSheet(); Bridge.act("open", u.url || "https://github.com/Fasdeq13/FasdeqVPN/releases/"); } }, "Перейти к релизам"))));
+  }
+
   function getPath(path) { return path.split(".").reduce((o, k) => (o == null ? o : o[k]), S.settings); }
+  const pend = new Map();
+  function applyPend(settings) {
+    const now = performance.now();
+    pend.forEach((e, path) => {
+      if (now - e.t > 1800) { pend.delete(path); return; }
+      const keys = path.split(".");
+      let o = settings;
+      for (let i = 0; i < keys.length - 1; i++) { if (o[keys[i]] == null) o[keys[i]] = {}; o = o[keys[i]]; }
+      o[keys[keys.length - 1]] = e.v;
+    });
+  }
   function setPath(path, value) {
+    pend.set(path, { v: value, t: performance.now() });
     const keys = path.split(".");
     let o = S.settings;
     for (let i = 0; i < keys.length - 1; i++) o = o[keys[i]];
@@ -470,7 +642,12 @@
   function sw(path, title, sub, show) {
     const s = h("span", { class: "switch" });
     const r = row(title, sub, s, () => setPath(path, !getPath(path)));
-    refreshers.push(() => { s.classList.toggle("on", !!getPath(path)); if (show) r.hidden = !show(); });
+    let last;
+    refreshers.push(() => {
+      const v = !!getPath(path);
+      if (v !== last) { last = v; s.classList.toggle("on", v); }
+      if (show) { const hd = !show(); if (r.hidden !== hd) r.hidden = hd; }
+    });
     return r;
   }
   function seg(path, options, title, show) {
@@ -478,12 +655,22 @@
     const buttons = options.map((o, i) => h("button", { onclick: () => setPath(path, i) }, o));
     const box = h("div", { class: "seg" }, thumb, buttons);
     const r = h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, title)), box);
+    let lastI = -1, lastW = 0;
     refreshers.push(() => {
-      if (show) r.hidden = !show();
+      if (show) { const hd = !show(); if (r.hidden !== hd) r.hidden = hd; }
       const i = clamp(Number(getPath(path)) || 0, 0, options.length - 1);
+      const w = box.clientWidth;
+      if (i === lastI && w === lastW) return;
+      if (r.hidden || !w) return;
       buttons.forEach((b, j) => b.classList.toggle("on", j === i));
       const b = buttons[i];
-      if (b && b.offsetWidth) { thumb.style.left = b.offsetLeft + "px"; thumb.style.width = b.offsetWidth + "px"; }
+      if (b && b.offsetWidth) {
+        if (lastW === 0 || w !== lastW) { thumb.style.transition = "none"; }
+        thumb.style.width = b.offsetWidth + "px";
+        thumb.style.transform = "translate3d(" + b.offsetLeft + "px,0,0)";
+        if (thumb.style.transition === "none") { void thumb.offsetWidth; thumb.style.transition = ""; }
+        lastI = i; lastW = w;
+      }
     });
     return r;
   }
@@ -495,8 +682,14 @@
       val.textContent = fmt(v);
     };
     const r = h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, title), val), input);
-    input.addEventListener("input", () => { const v = Number(input.value); paint(v); setPath(path, v); });
-    refreshers.push(() => { if (show) r.hidden = !show(); const v = Number(getPath(path)); input.value = v; paint(v); });
+    input.addEventListener("input", () => { const v = Number(input.value); lastV = v; paint(v); setPath(path, v); });
+    let lastV;
+    refreshers.push(() => {
+      if (show) { const hd = !show(); if (r.hidden !== hd) r.hidden = hd; }
+      const v = Number(getPath(path));
+      if (v === lastV || document.activeElement === input) return;
+      lastV = v; input.value = v; paint(v);
+    });
     return r;
   }
   function textBox(path, title, placeholder, show) {
@@ -616,12 +809,30 @@
         sw("tuning.rc", "Переподключаться при обрыве"),
         slider("tuning.rt", "Попыток за 2 минуты", 1, 20, 1, (x) => String(x), () => S.settings.tuning.rc),
         slider("tuning.rd", "Пауза между попытками", 1, 30, 1, (x) => x + " с", () => S.settings.tuning.rc)),
+      group("Ядро",
+        action("Ядро Xray", "Встроенное или своё, версия и загрузка", openCores)),
+      group("Сервисы",
+        sw("autoCheck", "Проверять сервисы автоматически", "Discord, Telegram и YouTube через каждый сервер, пока VPN включён"),
+        slider("checkInterval", "Интервал проверки", 5, 240, 5, (x) => x + " мин", () => S.settings.autoCheck),
+        action("Проверить сейчас", "Запустить проверку сервисов для всех серверов", () => { Bridge.act("checkServices"); snack("Проверяю сервисы…"); go("home"); })),
       group("Проверка пинга",
         seg("pingMode", ["Авто", "TCP", "UDP", "Оба", "ICMP"], "Способ"),
         seg("pingTimeout", ["2 с", "4 с", "8 с"], "Таймаут"),
         sw("autoPing", "Проверять автоматически"),
         sw("sortPing", "Сортировать по пингу")),
+      group("Обновления",
+        sw("updates.auto", "Сообщать о новых версиях", "Проверка релизов на GitHub раз в несколько часов"),
+        action("Проверить обновления", "github.com/Fasdeq13/FasdeqVPN/releases", async () => {
+          snack("Проверяю…");
+          const r = await Bridge.act("checkUpdate");
+          await syncNow();
+          if (r && r.error) snack(r.error);
+          else if (r && r.available) openUpdate();
+          else snack("Установлена последняя версия");
+        }),
+        action("Открыть страницу релизов", "Скачать APK вручную", () => Bridge.act("open", "https://github.com/Fasdeq13/FasdeqVPN/releases/"))),
       group("Интерфейс",
+        slider("textScale", "Размер текста", 0.8, 1.5, 0.05, (x) => Math.round(x * 100) + "%"),
         action("Обычный интерфейс", "Вернуться к интерфейсу на Compose. Приложение перезапустится", () => Bridge.act("switchUi", "compose")))
     );
     v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "FasdeqVPN"), h("div", { class: "body" }, "Версия 1.7 · веб-интерфейс")));
@@ -644,7 +855,11 @@
   function onState(next) {
     const first = !S || !S.__ready;
     next.settings = merge(DEFAULTS, next.settings || {});
+    applyPend(next.settings);
     next.servers = next.servers || [];
+    next.services = next.services || { names: ["Discord", "Telegram", "YouTube"], checking: false, checks: {}, best: [] };
+    next.cores = next.cores || { active: "", builtin: "", busy: null, list: [], releases: null };
+    next.update = next.update || { available: false };
     next.groups = next.groups || [];
     next.pings = next.pings || {};
     next.__ready = true;
@@ -655,6 +870,8 @@
     renderServers();
     refreshers.forEach((f) => f());
     fixCorners();
+    refreshLive();
+    if (S.update.available && S.settings.updates.auto && S.update.tag !== shownUpdate && !$("#sheet").classList.contains("show")) openUpdate();
     if (first) requestAnimationFrame(() => { refreshers.forEach((f) => f()); fixCorners(); });
   }
 

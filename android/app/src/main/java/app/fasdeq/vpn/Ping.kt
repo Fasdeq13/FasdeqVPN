@@ -14,10 +14,11 @@ data class PingResult(
     val tcp: Int? = null,
     val udp: Int? = null,
     val busy: Boolean = false,
-    val icmp: Int? = null
+    val icmp: Int? = null,
+    val tun: Int? = null
 ) {
     fun best(): Int {
-        val values = listOfNotNull(tcp, udp, icmp).filter { it > 0 }
+        val values = listOfNotNull(tcp, udp, icmp, tun).filter { it > 0 }
         return values.minOrNull() ?: Int.MAX_VALUE
     }
 }
@@ -114,7 +115,38 @@ object Ping {
         }
     }
 
+    private fun icmpRetry(host: String, timeout: Int, tries: Int): Int {
+        for (i in 0 until tries) {
+            val v = icmp(host, timeout)
+            if (v > 0) return v
+        }
+        return FAIL
+    }
+
+    private fun isWireGuard(server: Server): Boolean = server.conf.contains("[Interface]", ignoreCase = true)
+
+    private fun measureWireGuard(server: Server, timeout: Int): PingResult {
+        val t = target(server.endpoint) ?: return PingResult(udp = FAIL)
+        val box = IntArray(1) { FAIL }
+        val worker = Thread { box[0] = icmpRetry(t.first, timeout, 3) }
+        worker.start()
+        val u = udp(t.first, t.second, timeout)
+        worker.join()
+        val i = box[0]
+        if (i > 0) return PingResult(icmp = i, udp = if (u > 0) u else null)
+        if (u > 0) return PingResult(udp = u)
+        val tunnel = try {
+            val outbound = Links.parse(server.conf).outbound
+            Services.delay(Services.probeConfig(outbound), "https://www.gstatic.com/generate_204", (timeout / 1000L + 6L))
+        } catch (e: Throwable) {
+            FAIL
+        }
+        if (tunnel > 0) return PingResult(tun = tunnel)
+        return PingResult(udp = u, icmp = i)
+    }
+
     fun measure(server: Server, mode: Int, timeout: Int): PingResult {
+        if (mode != 1 && isWireGuard(server)) return measureWireGuard(server, timeout)
         val native = NativeCore.ping(server.conf, server.endpoint, mode, timeout)
         if (native != null) return native
         return measureKt(server, mode, timeout)

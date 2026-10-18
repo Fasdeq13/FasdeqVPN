@@ -653,13 +653,13 @@ class AppState(private val app: Application) {
         save()
     }
 
-    fun ping(list: List<Server>) {
-        if (list.isEmpty()) return
+    fun ping(list: List<Server>): Job {
+        if (list.isEmpty()) return Job().also { it.complete() }
         val mode = pingMode
         val timeout = PingOptions.timeouts[pingTimeout.coerceIn(0, PingOptions.timeouts.size - 1)]
         list.forEach { pings[it.id] = PingResult(busy = true) }
-        scope.launch {
-            val gate = Semaphore(64)
+        return scope.launch {
+            val gate = Semaphore(16)
             list.map { server ->
                 launch(Dispatchers.IO) {
                     gate.withPermit {
