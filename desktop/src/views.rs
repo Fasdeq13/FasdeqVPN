@@ -636,6 +636,76 @@ fn cores_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     .into()
 }
 
+fn anim_toggle<'a>(
+    ctx: &Ctx,
+    cfg: &AnimConfig,
+    icon_name: &str,
+    title: &str,
+    sub: &str,
+    set: fn(&mut AnimConfig, bool),
+    get: fn(&AnimConfig) -> bool,
+) -> El<'a> {
+    let on = get(cfg);
+    let mut next = cfg.clone();
+    set(&mut next, !on);
+    setting_item(
+        ctx,
+        icon_name,
+        title,
+        sub,
+        false,
+        Some(switch(ctx, on, Message::SetAnimCfg(next.clone()))),
+        Some(Message::SetAnimCfg(next)),
+    )
+}
+
+fn tuning_toggle<'a>(
+    ctx: &Ctx,
+    t: &Tuning,
+    title: &str,
+    sub: &str,
+    set: fn(&mut Tuning, bool),
+    get: fn(&Tuning) -> bool,
+) -> El<'a> {
+    let on = get(t);
+    let mut next = t.clone();
+    set(&mut next, !on);
+    setting_item(
+        ctx,
+        "memory",
+        title,
+        sub,
+        false,
+        Some(switch(ctx, on, Message::SetTuning(next.clone()))),
+        Some(Message::SetTuning(next)),
+    )
+}
+
+fn tuning_slider<'a>(
+    ctx: &Ctx,
+    t: &Tuning,
+    title: &str,
+    shown: String,
+    range: std::ops::RangeInclusive<f32>,
+    value: f32,
+    set: fn(&mut Tuning, f32),
+) -> El<'a> {
+    let base = t.clone();
+    setting_item(
+        ctx,
+        "tune",
+        title,
+        &shown,
+        true,
+        Some(m3_slider(ctx, range, value, move |x| {
+            let mut n = base.clone();
+            set(&mut n, x);
+            Message::SetTuning(n)
+        })),
+        None,
+    )
+}
+
 fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     let c = ctx.c;
     let s = &app.s;
@@ -700,6 +770,57 @@ fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
         ],
     ));
 
+    {
+        let cfg = s.anim.clone();
+        let mut items: Vec<El<'_>> = vec![anim_toggle(
+            ctx,
+            &cfg,
+            "bolt",
+            "Анимация кнопки",
+            "Полностью выключает движение кнопки",
+            |c, v| c.enabled = v,
+            |c| c.enabled,
+        )];
+        if cfg.enabled {
+            let a1 = cfg.clone();
+            let a2 = cfg.clone();
+            items.push(setting_item(
+                ctx,
+                "tune",
+                "Сила деформации",
+                &format!("{:.0}%", cfg.intensity * 100.0),
+                true,
+                Some(m3_slider(ctx, 0.0..=2.0, cfg.intensity, move |x| {
+                    let mut n = a1.clone();
+                    n.intensity = x;
+                    Message::SetAnimCfg(n)
+                })),
+                None,
+            ));
+            items.push(setting_item(
+                ctx,
+                "bolt",
+                "Темп",
+                &format!("x{:.2}", cfg.tempo),
+                true,
+                Some(m3_slider(ctx, 0.2..=3.0, cfg.tempo, move |x| {
+                    let mut n = a2.clone();
+                    n.tempo = x;
+                    Message::SetAnimCfg(n)
+                })),
+                None,
+            ));
+            items.push(anim_toggle(ctx, &cfg, "bolt", "Всплеск при подключении", "Расходящиеся кольца", |c, v| c.burst = v, |c| c.burst));
+            items.push(anim_toggle(ctx, &cfg, "bolt", "Движение в покое", "Медленное дыхание кнопки", |c, v| c.idle_motion = v, |c| c.idle_motion));
+            items.push(anim_toggle(ctx, &cfg, "power", "Анимация иконки", "Сжатие и покачивание при подключении", |c, v| c.icon_fx = v, |c| c.icon_fx));
+            items.push(anim_toggle(ctx, &cfg, "power", "Эффект нажатия", "Кнопка уменьшается под пальцем", |c, v| c.press = v, |c| c.press));
+        }
+        if crate::platform::MOBILE {
+            items.push(anim_toggle(ctx, &cfg, "bell", "Вибрация", "Отклик при нажатии и подключении", |c, v| c.haptics = v, |c| c.haptics));
+        }
+        col = col.push(group(ctx, "Анимация кнопки", items));
+    }
+
     let mtu_idx = MTU_VALUES.iter().position(|v| *v == s.mtu).unwrap_or(2);
     let mut conn = vec![
         setting_item(ctx, "power", "Автоподключение", "Подключаться при запуске", false,
@@ -712,10 +833,101 @@ fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     }
     conn.push(setting_item(ctx, "memory", "MTU", &format!("{}", s.mtu), true,
         Some(segmented(ctx, &["1280", "1400", "1500"], mtu_idx, true, None, Message::SetMtu)), None));
-    conn.push(setting_item(ctx, "code", "Ядро Xray",
-        &app.cores.iter().find(|x| x.id == s.active_core).or(app.cores.first()).map(|x| x.label.clone()).unwrap_or_else(|| "не установлено".into()),
-        false, Some(icon("open", 20.0, c.on_surface_variant).into()), Some(Message::SheetOpen(Sheet::Cores))));
+    if !crate::platform::MOBILE {
+        conn.push(setting_item(ctx, "code", "Ядро Xray",
+            &app.cores.iter().find(|x| x.id == s.active_core).or(app.cores.first()).map(|x| x.label.clone()).unwrap_or_else(|| "не установлено".into()),
+            false, Some(icon("open", 20.0, c.on_surface_variant).into()), Some(Message::SheetOpen(Sheet::Cores))));
+    }
+    if crate::platform::MOBILE && s.dns_preset >= 4 {
+        conn.push(block(vec![text_button(ctx, "Вставить DNS из буфера", c.primary, Message::PasteInto(1))]));
+    }
     col = col.push(group(ctx, "Подключение", conn));
+
+    if crate::platform::MOBILE {
+        let t = s.tuning.clone();
+        let mut items: Vec<El<'_>> = vec![
+            tuning_toggle(ctx, &t, "IPv6", "Выключите, если сайты зависают из-за IPv6", |t, v| t.ipv6 = v, |t| t.ipv6),
+            tuning_toggle(ctx, &t, "Sniffing", "Определять домен по HTTP, TLS и QUIC", |t, v| t.sniffing = v, |t| t.sniffing),
+            tuning_toggle(ctx, &t, "Блокировать QUIC", "Закрывает UDP 443, браузеры переходят на TCP", |t, v| t.block_quic = v, |t| t.block_quic),
+            tuning_toggle(ctx, &t, "Локальная сеть напрямую", "10.x, 172.16.x, 192.168.x, 169.254.x мимо VPN", |t, v| t.bypass_lan = v, |t| t.bypass_lan),
+            tuning_toggle(ctx, &t, "Mux", "Для VLESS, VMess, Trojan, Shadowsocks. Не работает с XTLS Vision", |t, v| t.mux = v, |t| t.mux),
+            tuning_toggle(ctx, &t, "Сеть без лимита", "Система не считает VPN-трафик мобильным", |t, v| t.unmetered = v, |t| t.unmetered),
+        ];
+        {
+            let base = t.clone();
+            items.push(setting_item(ctx, "memory", "Уровень лога Xray", LOG_NAMES[t.log_level.min(4)], true,
+                Some(segmented_wrap(ctx, &LOG_NAMES, t.log_level, move |i| {
+                    let mut n = base.clone();
+                    n.log_level = i;
+                    Message::SetTuning(n)
+                })), None));
+        }
+        {
+            let base = t.clone();
+            items.push(setting_item(ctx, "memory", "Domain strategy", DOMAIN_NAMES[t.domain_strategy.min(2)], true,
+                Some(segmented(ctx, &DOMAIN_NAMES, t.domain_strategy, true, None, move |i| {
+                    let mut n = base.clone();
+                    n.domain_strategy = i;
+                    Message::SetTuning(n)
+                })), None));
+        }
+        if t.mux {
+            items.push(tuning_slider(ctx, &t, "Потоков Mux", format!("{}", t.mux_concurrency), 1.0..=64.0, t.mux_concurrency as f32, |n, x| n.mux_concurrency = x as i32));
+        }
+        items.push(tuning_slider(ctx, &t, "Таймаут простоя", format!("{} с", t.conn_idle), 30.0..=1800.0, t.conn_idle as f32, |n, x| n.conn_idle = x as i32));
+        items.push(tuning_slider(
+            ctx,
+            &t,
+            "Буфер на соединение",
+            if t.buffer_kb == 0 { "по умолчанию".to_string() } else { format!("{} КБ", t.buffer_kb) },
+            0.0..=2048.0,
+            t.buffer_kb as f32,
+            |n, x| n.buffer_kb = ((x / 64.0) as i32) * 64,
+        ));
+        col = col.push(group(ctx, "Низкоуровневые", items));
+
+        let mut rc: Vec<El<'_>> = vec![tuning_toggle(ctx, &t, "Переподключаться при обрыве", "Иначе VPN остановится при первой ошибке", |t, v| t.reconnect = v, |t| t.reconnect)];
+        if t.reconnect {
+            rc.push(tuning_slider(ctx, &t, "Попыток за 2 минуты", format!("{}", t.retries), 1.0..=20.0, t.retries as f32, |n, x| n.retries = x as i32));
+            rc.push(tuning_slider(ctx, &t, "Пауза между попытками", format!("{} с", t.retry_delay), 1.0..=30.0, t.retry_delay as f32, |n, x| n.retry_delay = x as i32));
+        }
+        col = col.push(group(ctx, "Авто-переподключение", rc));
+
+        let mut apps: Vec<El<'_>> = Vec::new();
+        {
+            let base = t.clone();
+            apps.push(setting_item(ctx, "apps", "Режим", APP_MODES[t.app_mode.min(2)], true,
+                Some(segmented(ctx, &APP_MODES, t.app_mode, true, None, move |i| {
+                    let mut n = base.clone();
+                    n.app_mode = i;
+                    Message::SetTuning(n)
+                })), None));
+        }
+        if t.app_mode != 0 {
+            let base = t.clone();
+            apps.push(block(vec![
+                field(ctx, "Пакеты через запятую", "org.telegram.messenger, com.discord", &t.apps, move |x| {
+                    let mut n = base.clone();
+                    n.apps = x;
+                    Message::SetTuning(n)
+                }, None),
+                text_button(ctx, "Вставить из буфера", c.primary, Message::PasteInto(0)),
+                tx(ctx, Ty::BodySmall, format!("Распознано пакетов: {}", t.app_list().len()), c.on_surface_variant).into(),
+            ]));
+        }
+        col = col.push(group(ctx, "Приложения", apps));
+
+        col = col.push(group(
+            ctx,
+            "Интерфейс",
+            vec![
+                setting_item(ctx, "palette", "Цвета системы (Material You)", "Палитра из обоев. Нужен Android 12+", false,
+                    Some(switch(ctx, s.dynamic, Message::SetDynamic(!s.dynamic))), Some(Message::SetDynamic(!s.dynamic))),
+                setting_item(ctx, "screen", "Обычный интерфейс (Compose)", "Перезапустит приложение", false, None, Some(Message::SwitchUi("compose".into()))),
+                setting_item(ctx, "screen", "Интерфейс на egui (бета)", "Перезапустит приложение", false, None, Some(Message::SwitchUi("egui".into()))),
+            ],
+        ));
+    }
 
     let timeout_names = PING_TIMEOUT_NAMES;
     let interval = if s.auto_check {
@@ -740,16 +952,18 @@ fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     }
     col = col.push(group(ctx, "Проверка пинга", ping_items));
 
-    col = col.push(group(
-        ctx,
-        "Работа в фоне",
-        vec![
-            setting_item(ctx, "close", "Сворачивать в трей", "Закрытие окна не отключает VPN", false,
-                Some(switch(ctx, s.close_to_tray, Message::SetCloseToTray(!s.close_to_tray))), Some(Message::SetCloseToTray(!s.close_to_tray))),
-            setting_item(ctx, "power", "Запуск с системой", "Автозапуск при входе", false,
-                Some(switch(ctx, s.autostart, Message::SetAutostart(!s.autostart))), Some(Message::SetAutostart(!s.autostart))),
-        ],
-    ));
+    if !crate::platform::MOBILE {
+        col = col.push(group(
+            ctx,
+            "Работа в фоне",
+            vec![
+                setting_item(ctx, "close", "Сворачивать в трей", "Закрытие окна не отключает VPN", false,
+                    Some(switch(ctx, s.close_to_tray, Message::SetCloseToTray(!s.close_to_tray))), Some(Message::SetCloseToTray(!s.close_to_tray))),
+                setting_item(ctx, "power", "Запуск с системой", "Автозапуск при входе", false,
+                    Some(switch(ctx, s.autostart, Message::SetAutostart(!s.autostart))), Some(Message::SetAutostart(!s.autostart))),
+            ],
+        ));
+    }
 
     col = col.push(group(
         ctx,
@@ -760,7 +974,7 @@ fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     let about = container(
         column![
             tx(ctx, Ty::TitleLarge, "FasdeqVPN", c.on_primary_container),
-            tx(ctx, Ty::BodyMedium, "Версия 1.4", c.on_primary_container),
+            tx(ctx, Ty::BodyMedium, "Версия 1.6", c.on_primary_container),
             row![
                 text_button_icon(ctx, "person", "fasdeq13", c.on_primary_container, Message::OpenUrl("https://github.com/fasdeq13".into())),
                 text_button_icon(ctx, "code", "Fasdeq13/FasdeqVPN", c.on_primary_container, Message::OpenUrl("https://github.com/Fasdeq13/FasdeqVPN".into())),
@@ -781,7 +995,7 @@ fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
     .into()
 }
 
-fn segmented_wrap<'a>(ctx: &Ctx, names: &[&str], selected: usize, on: impl Fn(usize) -> Message + Copy + 'a) -> El<'a> {
+fn segmented_wrap<'a>(ctx: &Ctx, names: &[&str], selected: usize, on: impl Fn(usize) -> Message + 'a) -> El<'a> {
     let c = ctx.c;
     let mut r = row![].spacing(8);
     for (i, n) in names.iter().enumerate() {

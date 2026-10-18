@@ -64,6 +64,22 @@ pub struct Launch {
 }
 
 pub fn draw_launch(f: &mut Frame, size: Size, p: &Launch) {
+    let clean = |v: f32, lo: f32, hi: f32, fallback: f32| {
+        if v.is_nan() || v.is_infinite() {
+            fallback
+        } else {
+            v.clamp(lo, hi)
+        }
+    };
+    let mut fixed = *p;
+    fixed.amp = clean(p.amp, 0.0, 0.3, 0.0);
+    fixed.orbit = clean(p.orbit, 0.0, 1.0, 0.0);
+    fixed.aura = clean(p.aura, 0.0, 1.0, 0.0);
+    fixed.level = clean(p.level, 0.0, 1.0, 0.0);
+    fixed.burst = clean(p.burst, 0.0, 1.0, 1.0);
+    fixed.phase = clean(p.phase, -1.0e6, 1.0e6, 0.0);
+    fixed.scale = clean(p.scale, 0.5, 1.1, 1.0);
+    let p = &fixed;
     let cx = size.width / 2.0;
     let cy = size.height / 2.0;
     let center = Point::new(cx, cy);

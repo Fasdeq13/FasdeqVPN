@@ -1086,6 +1086,17 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 }
             }
 
+            SettingsGroup("Интерфейс") {
+                SettingItem(
+                    icon = R.drawable.ic_memory,
+                    title = "Новый интерфейс (веб)",
+                    subtitle = "Цвета, анимации и форма кнопки настраиваются. Приложение перезапустится. Серверы общие",
+                    onClick = {
+                        (context as? android.app.Activity)?.let { app.fasdeq.vpn.UiEngine.switchTo(it, app.fasdeq.vpn.UiEngine.WEB) }
+                    }
+                )
+            }
+
             SettingsGroup("Сброс") {
                 SettingItem(
                     icon = R.drawable.ic_refresh,

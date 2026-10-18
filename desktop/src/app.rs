@@ -9,6 +9,7 @@ use crate::store::{now_millis, Store};
 use crate::theme::{self, Scheme};
 use crate::tray::{self, TrayCmd};
 use crate::xray::{self, CoreInfo, Release};
+use fasdeq_core::model::{AnimConfig, Tuning};
 use iced::widget::text_editor;
 use iced::{event, keyboard, mouse, window, Event, Point, Size, Subscription, Task};
 use std::collections::{HashMap, HashSet};
@@ -136,6 +137,13 @@ pub enum Message {
     CoreDone(Result<CoreInfo, String>),
     OpenUrl(String),
     ConflictChecked(String, Vec<String>),
+    Env(Option<bool>, Option<Vec<i32>>),
+    SetDynamic(bool),
+    PasteInto(u8),
+    PastedInto(u8, String),
+    SetAnimCfg(AnimConfig),
+    SetTuning(Tuning),
+    SwitchUi(String),
     Noop,
 }
 
@@ -256,6 +264,8 @@ pub struct App {
     pub scheme: Scheme,
     pub auto_started: bool,
     pub conflict_id: Option<String>,
+    pub sys_colors: Option<Vec<i32>>,
+    pub env_tick: u32,
 }
 
 pub fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> impl Future<Output = T> {
@@ -272,7 +282,7 @@ impl App {
         let s = store.settings.clone();
         anim::set_scale(MOTION_FACTORS[s.anim_speed.min(MOTION_FACTORS.len() - 1)]);
         let system_dark = theme::system_is_dark();
-        let scheme = theme::build(&s, system_dark);
+        let scheme = theme::build(&s, system_dark, None);
         let mut checks = HashMap::new();
         for server in &store.servers {
             if let Some(v) = store.checks.get(&server.id) {
@@ -347,6 +357,8 @@ impl App {
             scheme,
             auto_started: false,
             conflict_id: None,
+            sys_colors: None,
+            env_tick: 0,
         };
         if !app.s.active_core.is_empty() && !app.cores.iter().any(|c| c.id == app.s.active_core) {
             app.s.active_core.clear();
@@ -374,6 +386,10 @@ impl App {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => Some(Message::Cursor(position)),
                 Event::Keyboard(keyboard::Event::KeyPressed {
                     key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::Escape),
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(keyboard::key::Named::BrowserBack),
                     ..
                 }) => Some(Message::Escape),
                 _ => None,
@@ -586,6 +602,33 @@ impl App {
         self.active_id = Some(server.id.clone());
         let active = self.s.active_core.clone();
         let dns = self.s.dns_list();
+        if cfg!(mobile) {
+            let tuning = self.s.tuning.clone();
+            let mtu = self.s.mtu;
+            let _ = &active;
+            return Task::perform(
+                blocking(move || -> Result<Arc<Conn>, String> {
+                    let mut parsed = links::parse(&server.conf)?;
+                    links::resolve(&mut parsed.outbound);
+                    let payload = serde_json::json!({
+                        "outbound": parsed.outbound.to_string(),
+                        "dns": dns.join(","),
+                        "mtu": mtu,
+                        "tuning": serde_json::to_value(&tuning).unwrap_or_default().to_string(),
+                        "name": server.name,
+                        "id": server.id,
+                    });
+                    let proc = xray::start_vpn(&payload)?;
+                    Ok(Arc::new(Conn {
+                        proc: Mutex::new(Some(proc)),
+                        api: 0,
+                        bin: PathBuf::new(),
+                        server_id: server.id.clone(),
+                    }))
+                }),
+                Message::Connected,
+            );
+        }
         Task::perform(
             blocking(move || -> Result<Arc<Conn>, String> {
                 let bin = xray::find_binary(&active)
@@ -673,7 +716,7 @@ impl App {
     }
 
     fn rescheme(&mut self) {
-        self.scheme = theme::build(&self.s, self.system_dark);
+        self.scheme = theme::build(&self.s, self.system_dark, self.sys_colors.as_deref());
     }
 
     fn ensure_group(&mut self, name: &str, url: &str) {
@@ -881,26 +924,36 @@ impl App {
         let connecting = self.status == Status::Connecting;
         let stopping = self.status == Status::Stopping;
         let busy = connecting || stopping;
-        a.amp.to(if connecting {
-            0.09
-        } else if stopping {
-            0.06
-        } else if on {
-            0.05
-        } else {
-            0.0
-        });
-        a.speed.to(if connecting {
-            2.8
-        } else if stopping {
-            3.4
-        } else if on {
-            0.35
-        } else {
-            0.12
-        });
-        a.orbit.to(if connecting { 1.0 } else { 0.0 });
-        a.aura.to(if on { 1.0 } else { 0.0 });
+        let cfg = self.s.anim.clone();
+        let live = cfg.enabled;
+        let k = if live { cfg.intensity.clamp(0.0, 2.0) } else { 0.0 };
+        let tempo = if live { cfg.tempo.clamp(0.2, 3.0) } else { 0.0 };
+        a.amp.to(
+            (if connecting {
+                0.09
+            } else if stopping {
+                0.06
+            } else if on && cfg.idle_motion {
+                0.05
+            } else {
+                0.0
+            }) * k,
+        );
+        a.speed.to(
+            (if connecting {
+                2.8
+            } else if stopping {
+                3.4
+            } else if on && cfg.idle_motion {
+                0.35
+            } else if cfg.idle_motion {
+                0.12
+            } else {
+                0.0
+            }) * tempo,
+        );
+        a.orbit.to(if connecting && live { 1.0 } else { 0.0 });
+        a.aura.to(if on && live && cfg.idle_motion { 1.0 } else { 0.0 });
         a.level.to(if on {
             1.0
         } else if connecting {
@@ -908,8 +961,19 @@ impl App {
         } else {
             0.0
         });
-        a.icon_scale.to(if busy { 0.78 } else { 1.0 });
-        a.rest.to(if on { 1.04 } else { 0.96 });
+        a.icon_scale.to(if busy && live && cfg.icon_fx { 0.78 } else { 1.0 });
+        a.rest.to(if live {
+            if on {
+                1.0 + 0.04 * k
+            } else {
+                1.0 - 0.04 * k
+            }
+        } else {
+            1.0
+        });
+        if !on && a.burst.value < 1.0 {
+            a.burst.snap(1.0);
+        }
         a.glow.to(if on && self.s.bg_style < 2 { 0.22 } else { 0.0 });
         a.on_t.to(if on { 1.0 } else { 0.0 });
         let range = self.hero_height();
@@ -959,6 +1023,7 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Frame(now) => {
+                crate::platform::mark_ready();
                 let dt = match self.last_frame {
                     Some(prev) => (now - prev).as_secs_f32().min(0.05),
                     None => 0.016,
@@ -994,6 +1059,20 @@ impl App {
                     }
                 } else {
                     self.burn_idx = 0;
+                }
+                #[cfg(mobile)]
+                {
+                    self.env_tick += 1;
+                    if self.env_tick % 5 == 1 {
+                        tasks.push(Task::perform(
+                            blocking(|| {
+                                let dark = crate::bridge::system_dark();
+                                let colors = crate::bridge::system_colors(dark.unwrap_or(false));
+                                (dark, colors)
+                            }),
+                            |(d, c)| Message::Env(d, c),
+                        ));
+                    }
                 }
                 if self.status == Status::On {
                     if let Some(since) = self.since {
@@ -1086,7 +1165,11 @@ impl App {
                 }
             }
             Message::PowerDown(down) => {
-                self.anims.press.to(if down { 0.88 } else { 1.0 });
+                let pressed = down && self.s.anim.enabled && self.s.anim.press;
+                self.anims.press.to(if pressed { 0.88 } else { 1.0 });
+                if down && cfg!(mobile) && self.s.anim.haptics {
+                    crate::bridge::haptic(false);
+                }
                 Task::none()
             }
             Message::Connected(result) => {
@@ -1111,10 +1194,15 @@ impl App {
                         self.since = Some(Instant::now());
                         self.rx = 0;
                         self.tx = 0;
-                        self.anims.burst.snap(0.0);
-                        self.anims.burst.to(1.0);
+                        if self.s.anim.enabled && self.s.anim.burst {
+                            self.anims.burst.snap(0.0);
+                            self.anims.burst.to(1.0);
+                        }
                         self.anims.wave.snap(0.0);
                         self.anims.wave.to(1.0);
+                        if cfg!(mobile) && self.s.anim.haptics {
+                            crate::bridge::haptic(true);
+                        }
                         Task::none()
                     }
                     Err(e) => {
@@ -1408,7 +1496,10 @@ impl App {
                 self.add_error = None;
                 Task::none()
             }
+            #[cfg(not(mobile))]
             Message::AddPaste => iced::clipboard::read().map(Message::Pasted),
+            #[cfg(mobile)]
+            Message::AddPaste => Task::perform(blocking(crate::bridge::clipboard), |t| Message::Pasted(Some(t))),
             Message::Pasted(text) => {
                 let text = text.unwrap_or_default();
                 if text.trim().is_empty() {
@@ -1418,6 +1509,9 @@ impl App {
                 self.add_text = text_editor::Content::with_text(&text);
                 self.submit_add(text)
             }
+            #[cfg(mobile)]
+            Message::AddFile => Task::none(),
+            #[cfg(not(mobile))]
             Message::AddFile => {
                 self.add_loading = true;
                 Task::perform(
@@ -1543,6 +1637,9 @@ impl App {
                 self.save();
                 Task::none()
             }
+            #[cfg(mobile)]
+            Message::CoreFile => Task::none(),
+            #[cfg(not(mobile))]
             Message::CoreFile => {
                 self.core_busy = Some("Проверяю ядро…".into());
                 Task::perform(
@@ -1611,6 +1708,34 @@ impl App {
                 self.conflict_id = Some(id);
                 self.confirm = Some(Confirm::Conflict(names.join(", ")));
                 self.show_window()
+            }
+            Message::Env(dark, colors) => {
+                let d = dark.unwrap_or(self.system_dark);
+                if d != self.system_dark || colors != self.sys_colors {
+                    self.system_dark = d;
+                    self.sys_colors = colors;
+                    self.rescheme();
+                }
+                Task::none()
+            }
+            Message::SetDynamic(v) => self.setting(|s| s.dynamic = v),
+            Message::PasteInto(target) => Task::perform(blocking(crate::bridge::clipboard), move |t| Message::PastedInto(target, t)),
+            Message::PastedInto(target, text) => {
+                let text = text.trim().to_string();
+                if text.is_empty() {
+                    return Task::none();
+                }
+                match target {
+                    0 => self.setting(|s| s.tuning.apps = text),
+                    _ => self.setting(|s| s.dns_custom = text),
+                }
+            }
+            Message::SetAnimCfg(v) => self.setting(|s| s.anim = v),
+            Message::SetTuning(v) => self.setting(|s| s.tuning = v),
+            Message::SwitchUi(mode) => {
+                self.save();
+                crate::bridge::switch_ui(&mode);
+                Task::none()
             }
             Message::Noop => Task::none(),
         }
@@ -1689,20 +1814,13 @@ pub fn sheet_index(s: &Sheet) -> usize {
 }
 
 pub fn open_url(url: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open").arg(url).spawn();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-    }
+    crate::platform::open_url(url);
 }
 
+#[cfg(mobile)]
+fn set_autostart(_enable: bool) {}
+
+#[cfg(not(mobile))]
 fn set_autostart(enable: bool) {
     let Ok(exe) = std::env::current_exe() else {
         return;

@@ -160,7 +160,7 @@ fn pure_black(mut s: Scheme) -> Scheme {
     s
 }
 
-pub fn build(settings: &Settings, system_dark: bool) -> Scheme {
+pub fn build(settings: &Settings, system_dark: bool, system: Option<&[i32]>) -> Scheme {
     let is_dark = match settings.theme {
         1 => false,
         2 => true,
@@ -168,7 +168,11 @@ pub fn build(settings: &Settings, system_dark: bool) -> Scheme {
     };
     let hue = ACCENT_HUES[settings.accent.min(ACCENT_HUES.len() - 1)];
     let k = PALETTE_FACTORS[settings.palette.min(PALETTE_FACTORS.len() - 1)];
-    let base = if is_dark { dark(hue, k) } else { light(hue, k) };
+    let dynamic = match system {
+        Some(colors) if settings.dynamic => from_system(colors, is_dark),
+        _ => None,
+    };
+    let base = dynamic.unwrap_or_else(|| if is_dark { dark(hue, k) } else { light(hue, k) });
     let tinted = if is_dark && settings.amoled {
         pure_black(base)
     } else {
@@ -177,11 +181,41 @@ pub fn build(settings: &Settings, system_dark: bool) -> Scheme {
     with_contrast(tinted, settings.contrast)
 }
 
+fn from_system(colors: &[i32], is_dark: bool) -> Option<Scheme> {
+    if colors.len() < 8 {
+        return None;
+    }
+    let c = |i: usize| {
+        let v = colors[i] as u32;
+        rgb(v & 0xFFFFFF)
+    };
+    let mut s = if is_dark { dark(250.0, 1.0) } else { light(250.0, 1.0) };
+    s.primary = c(0);
+    s.on_primary = c(1);
+    s.primary_container = c(2);
+    s.on_primary_container = c(3);
+    s.secondary_container = c(4);
+    s.on_secondary_container = c(5);
+    s.tertiary = c(6);
+    s.background = c(7);
+    s.container_low = lerp(s.background, s.primary_container, 0.18);
+    s.container_high = lerp(s.background, s.primary_container, 0.32);
+    s.container_highest = lerp(s.background, s.primary_container, 0.45);
+    s.on_surface = if is_dark { rgb(0xE6E1E9) } else { rgb(0x1C1B1F) };
+    s.on_surface_variant = lerp(s.on_surface, s.background, 0.25);
+    s.outline_variant = lerp(s.background, s.on_surface, 0.2);
+    Some(s)
+}
+
 pub fn system_is_dark() -> bool {
-    matches!(
-        dark_light_probe(),
-        Some(true)
-    )
+    #[cfg(mobile)]
+    {
+        return crate::bridge::system_dark().unwrap_or(false);
+    }
+    #[allow(unreachable_code)]
+    {
+        matches!(dark_light_probe(), Some(true))
+    }
 }
 
 fn dark_light_probe() -> Option<bool> {

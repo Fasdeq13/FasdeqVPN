@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 object VpnBridge {
@@ -58,6 +60,35 @@ object VpnBridge {
                     .putExtra("up", up)
                     .putExtra("msg", message)
             )
+        } catch (e: Throwable) {
+        }
+    }
+}
+
+object SharedStore {
+    private fun file(context: Context) = File(context.filesDir, "shared.json")
+
+    fun read(context: Context): JSONObject? {
+        return try {
+            val f = file(context)
+            if (f.exists()) JSONObject(f.readText()) else null
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    fun write(context: Context, servers: JSONArray, groups: JSONArray, selected: String?) {
+        try {
+            val f = file(context)
+            val tmp = File(context.filesDir, "shared.json.tmp")
+            tmp.writeText(
+                JSONObject()
+                    .put("servers", servers)
+                    .put("groups", groups)
+                    .put("selected", selected ?: JSONObject.NULL)
+                    .toString()
+            )
+            tmp.renameTo(f)
         } catch (e: Throwable) {
         }
     }

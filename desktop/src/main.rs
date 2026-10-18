@@ -1,32 +1,6 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
-mod anim;
-mod app;
-mod conflict;
-mod draw;
-mod flags;
-mod store;
-mod theme;
-mod tray;
-mod ui;
-mod views;
-mod xray;
-
-pub use fasdeq_core::{importer, links, model, ping};
-
-use iced::window;
-
-fn title(app: &app::App, _: window::Id) -> String {
-    app.title()
-}
-
-fn theme(_: &app::App, _: window::Id) -> iced::Theme {
-    iced::Theme::Dark
-}
-
-fn view(app: &app::App, _: window::Id) -> ui::El<'_> {
-    views::view(app)
-}
+use fasdeq_iced::tray;
 
 #[cfg(target_os = "linux")]
 fn install_desktop_entry() {
@@ -111,15 +85,5 @@ fn main() -> iced::Result {
     if let Some(l) = guard {
         serve_instance(l);
     }
-    iced::daemon(app::App::boot, app::App::update, view)
-        .title(title)
-        .theme(theme)
-        .subscription(app::App::subscription)
-        .font(include_bytes!("../assets/fonts/Roboto-Regular.ttf").as_slice())
-        .font(include_bytes!("../assets/fonts/Roboto-Medium.ttf").as_slice())
-        .font(include_bytes!("../assets/fonts/Roboto-Bold.ttf").as_slice())
-        .font(include_bytes!("../assets/fonts/TwemojiMozilla.ttf").as_slice())
-        .default_font(ui::font(iced::font::Weight::Normal))
-        .antialiasing(true)
-        .run()
+    fasdeq_iced::run()
 }

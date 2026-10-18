@@ -178,6 +178,7 @@ class AppState(private val app: Application) {
         groups.addAll(loadGroups())
         loadChecks()
         if (servers.none { it.id == selectedId }) selectedId = servers.firstOrNull()?.id
+        if (SharedStore.read(app) == null) save() else reloadShared()
         refreshCores()
         scope.launch { builtinVersion = withContext(Dispatchers.IO) { Cores.builtinVersion() } }
         if (autoPing) {
@@ -202,6 +203,35 @@ class AppState(private val app: Application) {
     }
 
     @Volatile private var stopGuardUntil = 0L
+
+    fun reloadShared() {
+        val o = SharedStore.read(app) ?: return
+        try {
+            val arr = o.optJSONArray("servers") ?: JSONArray()
+            val list = (0 until arr.length()).map {
+                val x = arr.getJSONObject(it)
+                Server(
+                    x.getString("id"),
+                    x.getString("name"),
+                    x.getString("conf"),
+                    x.optString("endpoint"),
+                    x.optString("group")
+                )
+            }
+            val garr = o.optJSONArray("groups") ?: JSONArray()
+            val glist = (0 until garr.length()).map {
+                val x = garr.getJSONObject(it)
+                Group(x.getString("name"), x.optString("url"))
+            }
+            servers.clear()
+            servers.addAll(list)
+            groups.clear()
+            groups.addAll(glist)
+            val sel = if (o.isNull("selected")) null else o.optString("selected", "").ifEmpty { null }
+            selectedId = if (servers.any { it.id == sel }) sel else servers.firstOrNull()?.id
+        } catch (e: Exception) {
+        }
+    }
 
     fun syncExternal() {
         val saved = VpnBridge.read(app)
@@ -925,5 +955,6 @@ class AppState(private val app: Application) {
             .putString("groups", garr.toString())
             .putString("selected", selectedId)
             .apply()
+        SharedStore.write(app, arr, garr, selectedId)
     }
 }

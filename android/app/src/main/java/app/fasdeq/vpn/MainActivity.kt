@@ -38,6 +38,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (UiEngine.failedLast(this)) {
+            UiEngine.fallBackToCompose(this)
+            android.widget.Toast.makeText(this, "Новый интерфейс не запустился, включён обычный", android.widget.Toast.LENGTH_LONG).show()
+        }
+        if (UiEngine.engine(this) == UiEngine.WEB) {
+            UiEngine.armProbe(this)
+            startActivity(Intent(this, WebUiActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
+            finish()
+            return
+        }
         enableEdgeToEdge()
         askNotifications()
         if (savedInstanceState == null) {
@@ -53,6 +63,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        FasdeqApp.state.reloadShared()
         FasdeqApp.state.syncExternal()
     }
 
