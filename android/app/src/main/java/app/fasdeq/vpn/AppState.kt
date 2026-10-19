@@ -572,7 +572,7 @@ class AppState(private val app: Application) {
         val fresh = ArrayList<Server>()
         for (item in items) {
             try {
-                val parsed = Links.parse(item.link)
+                val parsed = Plugins.describe(app, item.link) ?: Links.parse(item.link)
                 val existing = servers.indexOfFirst { it.conf == item.link }
                 if (existing < 0) {
                     val hint = if (items.size == 1) nameHint else ""
@@ -847,7 +847,12 @@ class AppState(private val app: Application) {
     }
 
     private fun launchSwitch(target: Server) {
-        val outbound = try {
+        val plugin = try {
+            Plugins.forConf(app, target.conf)
+        } catch (e: Throwable) {
+            null
+        }
+        val outbound = if (plugin != null) "{}" else try {
             Links.parse(target.conf).outbound.toString()
         } catch (e: Exception) {
             error = e.message ?: "Неверная конфигурация"
@@ -866,6 +871,11 @@ class AppState(private val app: Application) {
             .putExtra(FasdeqVpnService.EXTRA_TUNING, tuning.toJson())
             .putExtra(FasdeqVpnService.EXTRA_NAME, target.name)
             .putExtra(FasdeqVpnService.EXTRA_ID, target.id)
+            .putExtra(FasdeqVpnService.EXTRA_RULES, Plugins.rules(app).toString())
+        if (plugin != null) {
+            intent.putExtra(FasdeqVpnService.EXTRA_PLUGIN_LIB, plugin.lib?.absolutePath ?: "")
+            intent.putExtra(FasdeqVpnService.EXTRA_PLUGIN_CONF, Plugins.pluginConfig(app, plugin, target.conf))
+        }
         try {
             ContextCompat.startForegroundService(app, intent)
         } catch (e: Exception) {

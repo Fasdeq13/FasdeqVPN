@@ -9,6 +9,7 @@ import java.util.Base64
 class FasdeqApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        appContext = this
         val main = currentProcess() == packageName
         if (main) state = AppState(this)
         try {
@@ -35,5 +36,6 @@ class FasdeqApp : Application() {
 
     companion object {
         lateinit var state: AppState
+        lateinit var appContext: android.content.Context
     }
 }

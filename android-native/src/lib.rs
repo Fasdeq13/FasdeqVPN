@@ -1,4 +1,5 @@
 pub mod api;
+pub mod plugin;
 
 use jni::objects::{JClass, JString};
 use jni::sys::{jint, jlong, jstring};
@@ -69,4 +70,30 @@ pub extern "system" fn Java_app_fasdeq_vpn_Native_innerConfig(
         .filter(|s| !s.is_empty())
         .collect();
     guarded(&mut env, move |_| api::inner_config(&outbound, socks as u16, http as u16, &dns))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_fasdeq_vpn_Native_pluginOpen(mut env: JNIEnv, _: JClass, path: JString) -> jstring {
+    let path = text(&mut env, &path);
+    guarded(&mut env, move |_| plugin::open(&path))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_fasdeq_vpn_Native_pluginCall(
+    mut env: JNIEnv,
+    _: JClass,
+    handle: jlong,
+    op: JString,
+    config: JString,
+    fd: jint,
+    arg: jlong,
+) -> jstring {
+    let op = text(&mut env, &op);
+    let config = text(&mut env, &config);
+    guarded(&mut env, move |_| plugin::call(handle, &op, &config, fd, arg))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_fasdeq_vpn_Native_pluginClose(mut env: JNIEnv, _: JClass, handle: jlong) -> jstring {
+    guarded(&mut env, move |_| plugin::close(handle))
 }

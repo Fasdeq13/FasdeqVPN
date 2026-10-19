@@ -1,0 +1,6 @@
+{
+  "engines": [
+    { "family": "wireguard-go", "name": "WireGuard", "versions": [] },
+    { "family": "amneziawg", "name": "AmneziaWG", "versions": [] }
+  ]
+}

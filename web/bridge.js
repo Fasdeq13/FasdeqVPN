@@ -54,6 +54,13 @@
     settings: {},
     services: { names: ["Discord", "Telegram", "YouTube"], checking: false, checks: {}, best: [] },
     cores: { active: "", builtin: "25.9.11", busy: null, list: [{ id: "c1", label: "Xray 25.8.3", version: "25.8.3" }], releases: null },
+    plugins: {
+      list: [{ key: "ru-bypass@1.0", id: "ru-bypass", name: "Обход для приложений", version: "1.0", family: "ru-bypass", author: "Fasdeq13", description: "Напрямую: банки и госуслуги", kinds: ["rules"], enabled: true, wg: false, hasUi: false,
+        schema: [{ key: "apps", type: "text", title: "Пакеты через запятую", placeholder: "ru.sberbankmobile" }, { key: "strict", type: "switch", title: "Строгий режим", sub: "Блокировать остальное" }, { key: "level", type: "select", title: "Уровень", options: ["Мало", "Средне", "Много"] }, { key: "n", type: "number", title: "Лимит", min: 0, max: 20, step: 1 }],
+        values: { apps: "", strict: false, level: 1, n: 5 } }],
+      engine: "", busy: null, ui: [], catalog: null,
+      families: [{ family: "wireguard-go", name: "WireGuard" }, { family: "amneziawg", name: "AmneziaWG" }],
+    },
     update: { available: true, checking: false, tag: "v1.8", url: "https://github.com/Fasdeq13/FasdeqVPN/releases/", notes: "Новый интерфейс, проверка сервисов", current: "1.7" },
   };
   let timer = null;
@@ -162,6 +169,21 @@
         case "renameGroup": S.servers.forEach((x) => { if (x.group === payload.old) x.group = payload.name; }); S.groups.forEach((g) => { if (g.name === payload.old) g.name = payload.name; }); push(); break;
         case "clearGroup": break;
         case "open": return Promise.resolve({});
+        case "wgEngine": S.plugins.engine = payload; push(); break;
+        case "loadCatalog":
+          return new Promise((r) => setTimeout(() => { S.plugins.catalog = [{ family: "amneziawg", name: "AmneziaWG", versions: [{ version: "1.0.20250601", url: "https://x/awg1.zip", size: 6200000, notes: "AWG 1.5" }, { version: "1.0.20250301", url: "https://x/awg0.zip", size: 6100000, notes: "" }] }, { family: "wireguard-go", name: "WireGuard", versions: [{ version: "0.0.20250522", url: "https://x/wg.zip", size: 3000000, notes: "" }] }]; push(); r({}); }, 500));
+        case "installPluginUrl": {
+          const v = String(payload.url).includes("awg") ? "1.0.20250601" : "0.0.20250522";
+          const fam = String(payload.url).includes("awg") ? "amneziawg" : "wireguard-go";
+          const key = fam + "@" + v;
+          if (!S.plugins.list.some((x) => x.key === key)) S.plugins.list.push({ key, id: fam, name: fam === "amneziawg" ? "AmneziaWG" : "WireGuard-Go", version: v, family: fam, author: "", description: "", kinds: ["protocol"], enabled: true, wg: true, hasUi: false, schema: [], values: {} });
+          if (payload.select) S.plugins.engine = key;
+          push(); return Promise.resolve({});
+        }
+        case "pickPlugin": return Promise.resolve({ cancel: true });
+        case "pluginEnable": { const x = S.plugins.list.find((q) => q.key === payload.key); if (x) x.enabled = payload.value; push(); break; }
+        case "pluginDelete": S.plugins.list = S.plugins.list.filter((q) => q.key !== payload); if (S.plugins.engine === payload) S.plugins.engine = ""; push(); break;
+        case "pluginSet": { const x = S.plugins.list.find((q) => q.key === payload.key); if (x) x.values[payload.name] = payload.value; push(); break; }
         case "switchUi":
           return Promise.resolve({});
         case "clipboard":

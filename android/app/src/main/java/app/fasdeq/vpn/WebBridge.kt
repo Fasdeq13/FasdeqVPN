@@ -11,7 +11,9 @@ import android.os.Looper
 import android.view.HapticFeedbackConstants
 import android.webkit.JavascriptInterface
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -149,6 +151,60 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
                 push()
             }
+            "pickPlugin" -> host.pickPlugin { uri ->
+                if (uri == null) {
+                    reply(id, JSONObject().put("cancel", true))
+                } else {
+                    host.lifecycleScope.launch {
+                        val error = withContext(Dispatchers.IO) {
+                            try {
+                                val stream = host.contentResolver.openInputStream(uri) ?: throw IllegalStateException("Не удалось открыть файл")
+                                stream.use { Plugins.install(host, it, displayName(host, uri)) }
+                                null
+                            } catch (e: Throwable) {
+                                e.message ?: "Не удалось установить"
+                            }
+                        }
+                        reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                        push()
+                    }
+                }
+            }
+            "installPluginUrl" -> host.lifecycleScope.launch {
+                val o = value as? JSONObject
+                val url = o?.optString("url") ?: text
+                val select = o?.optBoolean("select", false) ?: false
+                val error = withContext(Dispatchers.IO) { Plugins.installFromUrl(host, url.trim(), select) }
+                reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                push()
+            }
+            "loadCatalog" -> host.lifecycleScope.launch {
+                val error = withContext(Dispatchers.IO) { Plugins.loadCatalog() }
+                reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                push()
+            }
+            "pluginEnable" -> {
+                val o = value as JSONObject
+                Plugins.setEnabled(host, o.getString("key"), o.getBoolean("value"))
+                reply(id)
+                push()
+            }
+            "pluginDelete" -> {
+                Plugins.delete(host, text)
+                reply(id)
+                push()
+            }
+            "pluginSet" -> {
+                val o = value as JSONObject
+                Plugins.setSetting(host, o.getString("key"), o.getString("name"), o.opt("value"))
+                reply(id)
+                push()
+            }
+            "wgEngine" -> {
+                Plugins.setWgEngine(host, text)
+                reply(id)
+                push()
+            }
             "checkUpdate" -> host.lifecycleScope.launch {
                 Updates.check(host, true)
                 val st = Updates.state
@@ -274,6 +330,7 @@ class WebBridge(private val host: WebUiActivity) {
     }
 
     private fun protoOf(conf: String): String {
+        Plugins.label(host, conf)?.let { return it }
         if (conf.contains("[Interface]", ignoreCase = true)) return "WireGuard"
         return when (val scheme = conf.substringBefore("://", "").lowercase()) {
             "vless" -> "VLESS"
@@ -372,6 +429,7 @@ class WebBridge(private val host: WebUiActivity) {
         settings.put("autoCheck", st.autoCheck)
         settings.put("checkInterval", st.checkInterval.toDouble())
         o.put("settings", settings)
+        o.put("plugins", Plugins.snapshot(host))
 
         val checks = JSONObject()
         for (s in st.servers) {

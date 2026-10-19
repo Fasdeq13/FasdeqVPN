@@ -32,6 +32,7 @@ class FasdeqVpnService : VpnService() {
     @Volatile private var iface: ParcelFileDescriptor? = null
     @Volatile private var controller: CoreController? = null
     @Volatile private var coreFd = -1
+    @Volatile private var pluginHandle = 0L
     @Volatile private var stopping = false
     @Volatile private var halted = false
     @Volatile private var generation = 0
@@ -50,7 +51,10 @@ class FasdeqVpnService : VpnService() {
         val core: String,
         val dns: List<String>,
         val mtu: Int,
-        val tuning: Tuning = Tuning()
+        val tuning: Tuning = Tuning(),
+        val rules: String = "",
+        val pluginLib: String = "",
+        val pluginConf: String = ""
     )
 
     private fun handler(gen: Int) = object : CoreCallbackHandler {
@@ -79,7 +83,10 @@ class FasdeqVpnService : VpnService() {
                     intent.getStringExtra(EXTRA_CORE) ?: "",
                     (intent.getStringExtra(EXTRA_DNS) ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
                     intent.getIntExtra(EXTRA_MTU, 1500),
-                    Tuning.fromJson(intent.getStringExtra(EXTRA_TUNING))
+                    Tuning.fromJson(intent.getStringExtra(EXTRA_TUNING)),
+                    intent.getStringExtra(EXTRA_RULES) ?: "",
+                    intent.getStringExtra(EXTRA_PLUGIN_LIB) ?: "",
+                    intent.getStringExtra(EXTRA_PLUGIN_CONF) ?: ""
                 )
             }
             serverName = intent.getStringExtra(EXTRA_NAME) ?: ""
@@ -92,7 +99,10 @@ class FasdeqVpnService : VpnService() {
                     prefs.getString(KEY_CORE, "") ?: "",
                     (prefs.getString(KEY_DNS, "1.1.1.1,8.8.8.8") ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
                     prefs.getInt(KEY_MTU, 1500),
-                    Tuning.fromJson(prefs.getString(KEY_TUNING, null))
+                    Tuning.fromJson(prefs.getString(KEY_TUNING, null)),
+                    prefs.getString(KEY_RULES, "") ?: "",
+                    prefs.getString(KEY_PLUGIN_LIB, "") ?: "",
+                    prefs.getString(KEY_PLUGIN_CONF, "") ?: ""
                 )
             }
             serverName = prefs.getString(KEY_NAME, "") ?: ""
@@ -116,6 +126,9 @@ class FasdeqVpnService : VpnService() {
             .putString(KEY_DNS, params.dns.joinToString(","))
             .putInt(KEY_MTU, params.mtu)
             .putString(KEY_TUNING, params.tuning.toJson())
+            .putString(KEY_RULES, params.rules)
+            .putString(KEY_PLUGIN_LIB, params.pluginLib)
+            .putString(KEY_PLUGIN_CONF, params.pluginConf)
             .putString(KEY_NAME, serverName)
             .putString(KEY_ID, serverId)
             .commit()
@@ -310,13 +323,18 @@ class FasdeqVpnService : VpnService() {
                     generation++
                     stopping = false
                     val gen = generation
+                    if (params.pluginLib.isNotEmpty()) {
+                        startPlugin(params)
+                        return@synchronized
+                    }
+                    val rules = parseRules(params.rules)
                     val outbound = JSONObject(params.outbound)
                     val config: String
                     if (params.core.isNotEmpty() && File(params.core).exists()) {
                         val port = startChild(params.core, outbound)
-                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu, params.tuning)
+                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu, params.tuning, rules)
                     } else {
-                        config = Links.buildConfig(outbound, params.mtu, params.tuning)
+                        config = Links.buildConfig(outbound, params.mtu, params.tuning, rules)
                     }
                     val t = params.tuning
                     val builder = Builder()
@@ -328,28 +346,7 @@ class FasdeqVpnService : VpnService() {
                         builder.addAddress("fdfe:dcba:9876::1", 126).addRoute("::", 0)
                     }
                     if (Build.VERSION.SDK_INT >= 29) builder.setMetered(!t.unmetered)
-                    val apps = t.appList()
-                    if (t.appMode == 2 && apps.isNotEmpty()) {
-                        for (a in apps) {
-                            try {
-                                builder.addAllowedApplication(a)
-                            } catch (e: Exception) {
-                            }
-                        }
-                    } else {
-                        try {
-                            builder.addDisallowedApplication(packageName)
-                        } catch (e: Exception) {
-                        }
-                        if (t.appMode == 1) {
-                            for (a in apps) {
-                                try {
-                                    builder.addDisallowedApplication(a)
-                                } catch (e: Exception) {
-                                }
-                            }
-                        }
-                    }
+                    applyApps(builder, t, rules)
                     for (dns in params.dns) {
                         try {
                             builder.addDnsServer(dns)
@@ -382,6 +379,99 @@ class FasdeqVpnService : VpnService() {
                 }
             }
         }.start()
+    }
+
+    private fun parseRules(raw: String): JSONObject = try {
+        if (raw.isBlank()) JSONObject() else JSONObject(raw)
+    } catch (e: Throwable) {
+        JSONObject()
+    }
+
+    private fun strings(a: org.json.JSONArray?): List<String> =
+        if (a == null) emptyList() else (0 until a.length()).map { a.optString(it).trim() }.filter { it.isNotEmpty() }
+
+    private fun applyApps(builder: Builder, t: Tuning, rules: JSONObject) {
+        val apps = t.appList()
+        val only = if (t.appMode == 0) strings(rules.optJSONArray("onlyApps")) else emptyList()
+        val bypass = strings(rules.optJSONArray("bypassApps"))
+        if ((t.appMode == 2 && apps.isNotEmpty()) || only.isNotEmpty()) {
+            for (a in (if (t.appMode == 2) apps else only)) {
+                try {
+                    builder.addAllowedApplication(a)
+                } catch (e: Exception) {
+                }
+            }
+        } else {
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (e: Exception) {
+            }
+            val list = (if (t.appMode == 1) apps else emptyList()) + bypass
+            for (a in list) {
+                try {
+                    builder.addDisallowedApplication(a)
+                } catch (e: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun cidr(text: String): Pair<String, Int>? {
+        val i = text.indexOf('/')
+        val host = (if (i < 0) text else text.substring(0, i)).trim()
+        if (host.isEmpty()) return null
+        val prefix = if (i < 0) (if (host.contains(':')) 128 else 32) else text.substring(i + 1).trim().toIntOrNull() ?: return null
+        return Pair(host, prefix)
+    }
+
+    private fun startPlugin(params: Params) {
+        val opened = JSONObject(Native.pluginOpen(params.pluginLib))
+        if (!opened.optBoolean("ok")) throw IllegalStateException(opened.optString("error", "Не удалось загрузить плагин"))
+        val handle = opened.getLong("handle")
+        pluginHandle = handle
+        val prep = JSONObject(Native.pluginCall(handle, "prepare", params.pluginConf, -1, 0L))
+        if (!prep.optBoolean("ok")) throw IllegalStateException(prep.optString("error", "Плагин не подготовил туннель"))
+        val v = prep.getJSONObject("value")
+        if (v.has("error")) throw IllegalStateException(v.optString("error"))
+        val t = params.tuning
+        val builder = Builder().setSession("FasdeqVPN").setMtu(v.optInt("mtu", params.mtu))
+        val addresses = strings(v.optJSONArray("address"))
+        if (addresses.isEmpty()) builder.addAddress("172.19.0.1", 30)
+        for (a in addresses) {
+            val c = cidr(a) ?: continue
+            try {
+                builder.addAddress(c.first, c.second)
+            } catch (e: Exception) {
+            }
+        }
+        val routes = strings(v.optJSONArray("routes")).ifEmpty { if (t.ipv6) listOf("0.0.0.0/0", "::/0") else listOf("0.0.0.0/0") }
+        for (r in routes) {
+            val c = cidr(r) ?: continue
+            try {
+                builder.addRoute(c.first, c.second)
+            } catch (e: Exception) {
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 29) builder.setMetered(!t.unmetered)
+        applyApps(builder, t, parseRules(params.rules))
+        val dns = strings(v.optJSONArray("dns")).ifEmpty { params.dns }
+        for (d in dns) {
+            try {
+                builder.addDnsServer(d)
+            } catch (e: Exception) {
+            }
+        }
+        val tun = builder.establish() ?: throw IllegalStateException("Не удалось создать VPN-интерфейс")
+        iface = tun
+        val fd = tun.dup().detachFd()
+        coreFd = fd
+        val started = JSONObject(Native.pluginCall(handle, "start", params.pluginConf, fd, 0L))
+        if (!started.optBoolean("ok")) throw IllegalStateException(started.optString("error", "Плагин не запустился"))
+        connectedAt = System.currentTimeMillis()
+        acquireWake()
+        VpnBridge.write(this, true, serverId)
+        VpnBridge.send(this, true, null)
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(true))
     }
 
     private fun watchdog(gen: Int, core: CoreController) {
@@ -428,6 +518,19 @@ class FasdeqVpnService : VpnService() {
         stopping = true
         val core = controller
         controller = null
+        val plugin = pluginHandle
+        pluginHandle = 0L
+        if (plugin != 0L) {
+            val stopper = Thread {
+                try {
+                    Native.pluginCall(plugin, "stop", "", -1, 0L)
+                    Native.pluginClose(plugin)
+                } catch (e: Throwable) {
+                }
+            }
+            stopper.start()
+            stopper.join(wait)
+        }
         if (core != null) {
             val worker = Thread {
                 try {
@@ -510,6 +613,9 @@ class FasdeqVpnService : VpnService() {
         const val EXTRA_TUNING = "tuning"
         const val EXTRA_NAME = "name"
         const val EXTRA_ID = "id"
+        const val EXTRA_RULES = "rules"
+        const val EXTRA_PLUGIN_LIB = "plugin_lib"
+        const val EXTRA_PLUGIN_CONF = "plugin_conf"
         private const val KEY_RUN = "run"
         private const val KEY_CONFIG = "config"
         private const val KEY_CORE = "core"
@@ -518,6 +624,9 @@ class FasdeqVpnService : VpnService() {
         private const val KEY_TUNING = "tuning"
         private const val KEY_NAME = "name"
         private const val KEY_ID = "id"
+        private const val KEY_RULES = "rules"
+        private const val KEY_PLUGIN_LIB = "plugin_lib"
+        private const val KEY_PLUGIN_CONF = "plugin_conf"
         private const val CHANNEL = "vpn_state"
         private const val NOTIFICATION_ID = 1
     }

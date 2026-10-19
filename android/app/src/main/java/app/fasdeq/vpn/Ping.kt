@@ -145,7 +145,23 @@ object Ping {
         return PingResult(udp = u, icmp = i)
     }
 
+    private fun measurePlugin(server: Server, mode: Int, timeout: Int): PingResult {
+        val t = target(server.endpoint) ?: return PingResult(udp = FAIL)
+        if (mode == 1) return PingResult(tcp = tcp(t.first, t.second, timeout))
+        val box = IntArray(2) { FAIL }
+        val a = Thread { box[0] = tcp(t.first, t.second, timeout) }
+        val b = Thread { box[1] = icmpRetry(t.first, timeout, 2) }
+        a.start()
+        b.start()
+        val u = udp(t.first, t.second, timeout)
+        a.join()
+        b.join()
+        return PingResult(tcp = if (box[0] > 0) box[0] else null, icmp = if (box[1] > 0) box[1] else null, udp = if (u > 0) u else null)
+            .let { if (it.best() == Int.MAX_VALUE) PingResult(udp = u, icmp = box[1]) else it }
+    }
+
     fun measure(server: Server, mode: Int, timeout: Int): PingResult {
+        if (try { Plugins.forConf(FasdeqApp.appContext, server.conf) != null } catch (e: Throwable) { false }) return measurePlugin(server, mode, timeout)
         if (mode != 1 && isWireGuard(server)) return measureWireGuard(server, timeout)
         val native = NativeCore.ping(server.conf, server.endpoint, mode, timeout)
         if (native != null) return native

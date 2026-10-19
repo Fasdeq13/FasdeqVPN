@@ -22,6 +22,12 @@ object Importer {
     private val nameKeys = listOf("remarks", "name", "title", "ps", "alias")
 
     fun prepare(text: String): Prepared {
+        val hook = try {
+            Plugins.prepare(FasdeqApp.appContext, text)
+        } catch (e: Throwable) {
+            null
+        }
+        if (hook != null) return hook
         val native = NativeCore.call { Native.prepareImport(text) }
         if (native != null) {
             val arr = native.getJSONArray("items")

@@ -55,6 +55,19 @@ class WebUiActivity : ComponentActivity() {
         f?.invoke(uri)
     }
 
+    private var pluginPicked: ((Uri?) -> Unit)? = null
+
+    private val pluginPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val f = pluginPicked
+        pluginPicked = null
+        f?.invoke(uri)
+    }
+
+    fun pickPlugin(done: (Uri?) -> Unit) {
+        pluginPicked = done
+        pluginPicker.launch(arrayOf("*/*"))
+    }
+
     fun pickCore(done: (Uri?) -> Unit) {
         corePicked = done
         corePicker.launch(arrayOf("*/*"))
@@ -78,6 +91,7 @@ class WebUiActivity : ComponentActivity() {
 
         val loader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/plugins/", WebViewAssetLoader.InternalStoragePathHandler(this, Plugins.rootDir(this)))
             .build()
 
         web = WebView(this)
@@ -167,7 +181,7 @@ class WebUiActivity : ComponentActivity() {
             s.themeMode, s.dynamicColors, s.amoled, s.autoConnect, s.dnsPreset, s.dnsCustom, s.mtu,
             s.pingMode, s.pingTimeout, s.autoPing, s.sortPing, s.tuning,
             s.cores.toList(), s.activeCore, s.coreBusy, s.releases, s.autoCheck, s.checkInterval,
-            Updates.state.hashCode()
+            Updates.state.hashCode(), Plugins.busy, Plugins.catalog, Plugins.stamp
         ).hashCode()
     }
 

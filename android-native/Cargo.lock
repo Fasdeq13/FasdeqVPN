@@ -91,6 +91,7 @@ version = "1.4.0"
 dependencies = [
  "fasdeq-core",
  "jni",
+ "libc",
  "serde_json",
 ]
 

@@ -1,0 +1,19 @@
+{
+  "id": "ru-bypass",
+  "name": "Обход для приложений",
+  "version": "1.0",
+  "author": "Fasdeq13",
+  "description": "Российские домены и выбранные приложения идут мимо VPN",
+  "kinds": ["rules"],
+  "rules": {
+    "directDomains": ["ru", "su", "xn--p1ai"],
+    "directIps": ["10.0.0.0/8", "192.168.0.0/16"],
+    "bypassApps": [],
+    "fromSettings": { "bypassApps": "apps", "directDomains": "domains", "proxyDomains": "proxy" }
+  },
+  "settings": [
+    { "key": "apps", "type": "text", "title": "Приложения мимо VPN (пакеты через запятую)", "placeholder": "ru.sberbankmobile, ru.gosuslugi", "default": "" },
+    { "key": "domains", "type": "text", "title": "Свои домены напрямую", "placeholder": "example.ru, domain:bank.com", "default": "" },
+    { "key": "proxy", "type": "text", "title": "Домены только через VPN", "placeholder": "geosite:openai", "default": "" }
+  ]
+}

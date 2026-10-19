@@ -389,3 +389,15 @@ body.no-controls .seg .thumb { transition: none !important; }
 .top-row.two { flex-wrap: wrap; row-gap: 10px; }
 .top-row .tools { display: flex; gap: 8px; }
 .side { display: flex; flex-direction: column; align-items: center; gap: 5px; flex: none; }
+
+.seg-wrap { margin: 14px 0 6px; }
+.row.plug { cursor: default; }
+.row.plug .switch { flex: none; }
+.devs { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.dev { display: flex; align-items: center; gap: 12px; text-align: left; padding: 8px 10px; border-radius: 16px; background: var(--sc-high); width: 100%; }
+.dev .grow { flex: 1; min-width: 0; }
+.dev .t { font-size: calc(15px * var(--ts)); }
+.dev .s { font-size: calc(12px * var(--ts)); color: var(--on-surface-variant); }
+.group-title.tight { padding: 14px 2px 4px; }
+.seg.plain button { transition: background calc(200ms * var(--k)) var(--ease), color calc(200ms * var(--k)) var(--ease); }
+.seg.plain button.on { background: var(--primary); }

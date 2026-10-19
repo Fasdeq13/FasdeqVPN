@@ -46,7 +46,7 @@ object Links {
         }
     }
 
-    fun buildConfig(outbound: JSONObject, mtu: Int = 1500, t: Tuning = Tuning()): String {
+    fun buildConfig(outbound: JSONObject, mtu: Int = 1500, t: Tuning = Tuning(), extra: JSONObject? = null): String {
         val tun = JSONObject()
             .put("tag", "tun")
             .put("protocol", "tun")
@@ -67,6 +67,7 @@ object Links {
             outbound.put("mux", JSONObject().put("enabled", true).put("concurrency", t.muxConcurrency))
         }
         val rules = JSONArray()
+        if (extra != null) addPluginRules(rules, extra)
         if (t.blockQuic) {
             rules.put(
                 JSONObject()
@@ -116,6 +117,21 @@ object Links {
             )
         }
         return root.toString()
+    }
+
+    private fun strings(a: JSONArray?): List<String> =
+        if (a == null) emptyList() else (0 until a.length()).map { a.optString(it).trim() }.filter { it.isNotEmpty() }
+
+    private fun addPluginRules(rules: JSONArray, extra: JSONObject) {
+        fun dom(list: List<String>) = JSONArray(list.map { if (it.contains(':')) it else "domain:$it" })
+        val block = strings(extra.optJSONArray("blockDomains"))
+        val direct = strings(extra.optJSONArray("directDomains"))
+        val proxy = strings(extra.optJSONArray("proxyDomains"))
+        val ips = strings(extra.optJSONArray("directIps"))
+        if (block.isNotEmpty()) rules.put(JSONObject().put("type", "field").put("domain", dom(block)).put("outboundTag", "block"))
+        if (proxy.isNotEmpty()) rules.put(JSONObject().put("type", "field").put("domain", dom(proxy)).put("outboundTag", "proxy"))
+        if (direct.isNotEmpty()) rules.put(JSONObject().put("type", "field").put("domain", dom(direct)).put("outboundTag", "direct"))
+        if (ips.isNotEmpty()) rules.put(JSONObject().put("type", "field").put("ip", JSONArray(ips)).put("outboundTag", "direct"))
     }
 
     fun socksOutbound(port: Int): JSONObject = JSONObject()

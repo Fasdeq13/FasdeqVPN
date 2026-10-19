@@ -18,6 +18,8 @@
     download: "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z",
     check: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
     info: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
+    plug: "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z",
+    gear: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z",
     close: "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
   };
 
@@ -564,6 +566,164 @@
       h("div", { class: "actions" }, paste, h("button", { class: "btn text", onclick: closeSheet }, "Отмена"), ok)));
   }
 
+
+  const eng = { family: null, msg: "" };
+  const plg = { msg: "" };
+  function activePlugin() {
+    const key = S.plugins.engine;
+    return key ? S.plugins.list.find((p) => p.key === key) : null;
+  }
+  function engineLabel() {
+    const p = activePlugin();
+    return p ? p.name + " " + p.version : "Встроенный (Xray)";
+  }
+  function plainRow(title, sub, ctl, onTap, selected) {
+    return h(onTap ? "button" : "div", { class: "row" + (selected ? " selected" : ""), onclick: onTap }, h("div", { class: "grow" }, h("div", { class: "t" }, title), sub ? h("div", { class: "s" }, sub) : null), ctl);
+  }
+  function busyLine() {
+    const b = S.plugins.busy;
+    return b ? h("div", { class: "busy-line" }, h("div", { class: "bar" }), h("div", { class: "body" }, b)) : null;
+  }
+  function openEngine() {
+    eng.msg = "";
+    const act = activePlugin();
+    eng.family = eng.family || (act ? act.family : "");
+    openLive(() => {
+      const P = S.plugins;
+      const busy = !!P.busy;
+      const fams = [{ family: "", name: "Встроенный" }].concat(P.families);
+      const cur = eng.family;
+      const tabs = h("div", { class: "seg plain" }, fams.map((f) => h("button", { class: f.family === cur ? "on" : "", onclick: () => { eng.family = f.family; refreshLive(); } }, f.name)));
+      const out = h("div", {}, h("h2", {}, "Движок WireGuard"),
+        h("div", { class: "body" }, "Какой движок запускает WireGuard-конфигурации. Встроенный работает через Xray, остальные подключаются как плагины и дают выбор версии."),
+        h("div", { class: "seg-wrap" }, tabs), busyLine());
+      if (!cur) {
+        out.append(h("div", { class: "list" }, plainRow("Встроенный (Xray)", "Версия ядра: " + (S.cores.builtin || "—"), !P.engine ? icon("check") : null, () => Bridge.act("wgEngine", ""), !P.engine)));
+      } else {
+        const installed = P.list.filter((p) => p.family === cur);
+        out.append(h("div", { class: "group-title" }, h("span", {}, "Установленные версии")));
+        out.append(installed.length ? h("div", { class: "list" }, installed.map((p) => plainRow(p.name + " " + p.version, p.description || "", h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("pluginDelete", p.key); } }, icon("del")), () => Bridge.act("wgEngine", p.key), P.engine === p.key))) : h("div", { class: "body" }, "Пока ничего не установлено"));
+        const catFam = P.catalog ? P.catalog.find((c) => c.family === cur) : null;
+        out.append(h("div", { class: "group-title" }, h("span", {}, "Доступные версии"), h("button", { class: "icon-btn sm", "aria-label": "Обновить список", onclick: async () => { const r = await Bridge.act("loadCatalog"); eng.msg = r && r.error ? r.error : ""; refreshLive(); } }, icon("refresh"))));
+        if (!P.catalog) out.append(h("button", { class: "btn tonal", disabled: busy, onclick: async () => { const r = await Bridge.act("loadCatalog"); eng.msg = r && r.error ? r.error : ""; refreshLive(); } }, icon("download"), "Загрузить список версий"));
+        else if (!catFam || !catFam.versions.length) out.append(h("div", { class: "body" }, "В каталоге пока нет версий этого движка"));
+        else out.append(h("div", { class: "list" }, catFam.versions.map((v, i) => {
+          const have = installed.some((p) => p.version === v.version);
+          return plainRow(v.version + (i === 0 ? " · последняя" : ""), (v.notes || "") + (v.size ? (v.notes ? " · " : "") + fmtMb(v.size) : ""),
+            h("button", { class: "btn tonal", disabled: busy, onclick: async (e) => { e.stopPropagation(); const r = await Bridge.act("installPluginUrl", { url: v.url, select: true }); eng.msg = r && r.error ? r.error : "Версия " + v.version + " установлена и выбрана"; refreshLive(); } }, icon(have ? "refresh" : "download"), have ? "Заново" : "Скачать"));
+        })));
+      }
+      if (eng.msg) out.append(h("div", { class: "msg" }, eng.msg));
+      return out;
+    });
+  }
+
+  function pluginFieldRow(p, f) {
+    const cur = p.values[f.key];
+    const set = (v) => { p.values[f.key] = v; Bridge.act("pluginSet", { key: p.key, name: f.key, value: v }); };
+    if (f.type === "switch") {
+      const sw_ = h("span", { class: "switch" + (cur ? " on" : "") });
+      return h("button", { class: "row", onclick: () => { const v = !p.values[f.key]; sw_.classList.toggle("on", v); set(v); } }, h("div", { class: "grow" }, h("div", { class: "t" }, f.title || f.key), f.sub ? h("div", { class: "s" }, f.sub) : null), sw_);
+    }
+    if (f.type === "select") {
+      const opts = f.options || [];
+      const box = h("div", { class: "seg plain" }, opts.map((o, i) => h("button", { class: Number(cur) === i ? "on" : "", onclick: () => { set(i); box.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i)); } }, o)));
+      return h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, f.title || f.key)), box);
+    }
+    if (f.type === "text") {
+      const ta = h("textarea", { class: "inline", placeholder: f.placeholder || "", spellcheck: "false" });
+      ta.value = cur == null ? "" : String(cur);
+      let t = 0;
+      ta.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => set(ta.value), 250); });
+      return h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, f.title || f.key)), ta);
+    }
+    const min = f.min != null ? f.min : 0, max = f.max != null ? f.max : 100, step = f.step || 1;
+    const input = h("input", { type: "range", min, max, step });
+    const val = h("div", { class: "v" }, "");
+    const paint = (v) => { input.style.setProperty("--p", ((v - min) / (max - min)) * 100 + "%"); val.textContent = String(v); };
+    input.value = Number(cur) || 0;
+    paint(Number(input.value));
+    input.addEventListener("input", () => { const v = Number(input.value); paint(v); set(v); });
+    return h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, f.title || f.key), val), input);
+  }
+
+  function openPluginSettings(key) {
+    openSheet(h("div", {}, ...(() => {
+      const p = S.plugins.list.find((x) => x.key === key);
+      if (!p) return [h("h2", {}, "Плагин не найден")];
+      return [h("h2", {}, p.name), h("div", { class: "body" }, (p.description || "") + " v" + p.version), h("div", { class: "list", style: "margin-top:12px" }, (p.schema || []).map((f) => pluginFieldRow(p, f))),
+        h("div", { class: "actions split" }, h("button", { class: "btn filled", onclick: closeSheet }, "Готово"))];
+    })()));
+    fixCorners();
+  }
+
+  function urlSheet() {
+    const input = h("input", { class: "hex wide", placeholder: "https://…/plugin.zip", spellcheck: "false" });
+    const go_ = h("button", { class: "btn filled", onclick: async () => { const u = input.value.trim(); if (!u) return; closeSheet(); snack("Скачиваю…"); const r = await Bridge.act("installPluginUrl", { url: u, select: false }); snack(r && r.error ? r.error : "Плагин установлен"); } }, "Установить");
+    openSheet(h("div", {}, h("h2", {}, "Плагин по ссылке"), h("div", { class: "body" }, "Прямая ссылка https на .zip с plugin.json"), h("div", { style: "margin:16px 0" }, input), h("div", { class: "actions" }, h("button", { class: "btn text", onclick: closeSheet }, "Отмена"), go_)));
+  }
+
+  function openPlugins() {
+    plg.msg = "";
+    openLive(() => {
+      const P = S.plugins;
+      const busy = !!P.busy;
+      const kindName = { protocol: "протокол", rules: "правила", ui: "интерфейс" };
+      const rows = P.list.map((p) => h("div", { class: "row plug" },
+        h("div", { class: "grow" }, h("div", { class: "t" }, p.name + " " + p.version), h("div", { class: "s" }, (p.kinds || []).map((k) => kindName[k] || k).join(" · ") + (p.author ? " · " + p.author : ""))),
+        (p.schema || []).length ? h("button", { class: "icon-btn", "aria-label": "Настройки плагина", onclick: () => openPluginSettings(p.key) }, icon("gear")) : null,
+        h("button", { class: "switch" + (p.enabled ? " on" : ""), "aria-label": "Включить", onclick: () => { Bridge.act("pluginEnable", { key: p.key, value: !p.enabled }); if (p.hasUi) snack("Интерфейсные плагины применятся после перезапуска"); } }),
+        h("button", { class: "icon-btn", "aria-label": "Удалить", onclick: () => Bridge.act("pluginDelete", p.key) }, icon("del"))));
+      const out = h("div", {}, h("h2", {}, "Плагины"),
+        h("div", { class: "body" }, "Расширения: свои протоколы (.so), правила обхода для приложений и доменов, дополнения интерфейса. Плагины выполняют код, ставьте только из доверенных источников."),
+        busyLine(),
+        h("div", { class: "group-title" }, h("span", {}, "Установленные")),
+        rows.length ? h("div", { class: "list" }, rows) : h("div", { class: "body" }, "Плагинов пока нет"),
+        h("div", { class: "actions split" },
+          h("button", { class: "btn tonal", disabled: busy, onclick: async () => { const r = await Bridge.act("pickPlugin"); if (r && r.cancel) return; plg.msg = r && r.error ? r.error : "Плагин установлен"; refreshLive(); } }, icon("add"), "Из файла"),
+          h("button", { class: "btn tonal", disabled: busy, onclick: urlSheet }, icon("download"), "По ссылке")));
+      if (plg.msg) out.append(h("div", { class: "msg" }, plg.msg));
+      return out;
+    });
+    setTimeout(fixCorners, 0);
+  }
+
+  const pluginDefs = [];
+  const pluginLoaded = new Set();
+  let booted = false;
+  const pluginUi = { groups: [], cards: [] };
+  function pluginApi(id) {
+    return {
+      h, icon, snack, id,
+      act: (name, payload) => Bridge.act(name, payload),
+      state: () => S,
+      onState: (cb) => Bridge.onState(cb),
+      get: (name) => { const p = S.plugins.list.find((x) => x.id === id); return p ? p.values[name] : undefined; },
+      set: (name, value) => { const p = S.plugins.list.find((x) => x.id === id); if (p) { p.values[name] = value; Bridge.act("pluginSet", { key: p.key, name, value }); } },
+      addSettingsGroup: (title, nodes) => { const g = group(title, nodes); $("#view-settings").insertBefore(h("div", { class: "plugin-group" }, g), $("#view-settings .about")); fixCorners(); },
+      addHomeCard: (node) => { $("#view-home").append(node); },
+      sheet: (node) => openSheet(node),
+      closeSheet,
+    };
+  }
+  function runDef(d) {
+    try { d.fn(pluginApi(d.id)); } catch (e) { console.error("plugin " + d.id, e); }
+  }
+  window.FasdeqPlugin = {
+    define(id, fn) { const d = { id, fn }; pluginDefs.push(d); if (booted) runDef(d); },
+  };
+  function loadPluginUi() {
+    const base = Bridge.native ? "https://appassets.androidplatform.net/plugins/" : "plugins/";
+    (S.plugins.ui || []).forEach((entry) => {
+      if (pluginLoaded.has(entry)) return;
+      pluginLoaded.add(entry);
+      const kind = entry.slice(0, entry.indexOf(":"));
+      const path = entry.slice(entry.indexOf(":") + 1);
+      if (kind === "css") document.head.append(h("link", { rel: "stylesheet", href: base + path }));
+      else document.body.append(h("script", { src: base + path }));
+    });
+  }
+
   const coreUi = { rel: false, msg: "" };
   function fmtMb(n) { return (Number(n) / 1048576).toFixed(1) + " МБ"; }
   function openCores() {
@@ -757,6 +917,8 @@
     const v = $("#view-settings");
     const put = (...x) => v.append(...x.flat(Infinity));
     const anim = () => S.settings.anim.all;
+    const engRow = action("Движок WireGuard", "—", openEngine);
+    refreshers.push(() => { const el = engRow.querySelector(".s"); const t = engineLabel(); if (el && el.textContent !== t) el.textContent = t; });
     put(
       h("div", { class: "top-row" }, h("h1", { class: "headline" }, "Настройки")),
       group("Цвет и тема",
@@ -815,6 +977,9 @@
         sw("autoCheck", "Проверять сервисы автоматически", "Discord, Telegram и YouTube через каждый сервер, пока VPN включён"),
         slider("checkInterval", "Интервал проверки", 5, 240, 5, (x) => x + " мин", () => S.settings.autoCheck),
         action("Проверить сейчас", "Запустить проверку сервисов для всех серверов", () => { Bridge.act("checkServices"); snack("Проверяю сервисы…"); go("home"); })),
+      group("Движок и плагины",
+        engRow,
+        action("Плагины", "Протоколы, правила обхода, дополнения интерфейса", openPlugins)),
       group("Проверка пинга",
         seg("pingMode", ["Авто", "TCP", "UDP", "Оба", "ICMP"], "Способ"),
         seg("pingTimeout", ["2 с", "4 с", "8 с"], "Таймаут"),
@@ -835,7 +1000,12 @@
         slider("textScale", "Размер текста", 0.8, 1.5, 0.05, (x) => Math.round(x * 100) + "%"),
         action("Обычный интерфейс", "Вернуться к интерфейсу на Compose. Приложение перезапустится", () => Bridge.act("switchUi", "compose")))
     );
-    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "FasdeqVPN"), h("div", { class: "body" }, "Версия 1.7 · веб-интерфейс")));
+    const dev = (name, role, url) => h("button", { class: "dev", onclick: () => Bridge.act("open", url) },
+      h("div", { class: "avatar" }, Array.from(name)[0].toUpperCase()),
+      h("div", { class: "grow" }, h("div", { class: "t" }, name), role ? h("div", { class: "s" }, role) : null));
+    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "FasdeqVPN"), h("div", { class: "body" }, "Версия 1.7 · веб-интерфейс"),
+      h("div", { class: "group-title tight" }, h("span", {}, "Участники")),
+      h("div", { class: "devs" }, dev("Fasdeq13", "Создатель", "https://github.com/Fasdeq13/FasdeqVPN"), dev("fezix64", "", "https://github.com/fezix64"))));
   }
 
   function fixCorners() {
@@ -860,6 +1030,7 @@
     next.services = next.services || { names: ["Discord", "Telegram", "YouTube"], checking: false, checks: {}, best: [] };
     next.cores = next.cores || { active: "", builtin: "", busy: null, list: [], releases: null };
     next.update = next.update || { available: false };
+    next.plugins = next.plugins || { list: [], engine: "", busy: null, ui: [], catalog: null, families: [] };
     next.groups = next.groups || [];
     next.pings = next.pings || {};
     next.__ready = true;
@@ -871,6 +1042,7 @@
     refreshers.forEach((f) => f());
     fixCorners();
     refreshLive();
+    loadPluginUi();
     if (S.update.available && S.settings.updates.auto && S.update.tag !== shownUpdate && !$("#sheet").classList.contains("show")) openUpdate();
     if (first) requestAnimationFrame(() => { refreshers.forEach((f) => f()); fixCorners(); });
   }
@@ -903,6 +1075,8 @@
     window.__go = go;
     window.__addSheet = addSheet;
     window.__Power = Power;
+    booted = true;
+    pluginDefs.forEach(runDef);
   }
   boot();
 })();

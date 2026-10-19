@@ -1,0 +1,12 @@
+{
+  "id": "session-card",
+  "name": "Карточка трафика",
+  "version": "1.0",
+  "author": "Fasdeq13",
+  "description": "Показывает объём трафика за сессию на главной",
+  "kinds": ["ui"],
+  "ui": { "js": "ui.js", "css": "ui.css" },
+  "settings": [
+    { "key": "show", "type": "switch", "title": "Показывать карточку", "default": true }
+  ]
+}
