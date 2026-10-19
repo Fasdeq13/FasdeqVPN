@@ -20,12 +20,29 @@ data class ServiceCheck(
 
 object Services {
     val names = listOf("Discord", "Telegram", "YouTube")
-    val urls = listOf(
-        "https://discord.com/api/gateway",
-        "https://telegram.org/",
-        "https://www.youtube.com/generate_204"
+    val mirrors: List<List<String>> = listOf(
+        listOf(
+            "https://discord.com/api/v9/gateway",
+            "https://discordapp.com/api/v9/gateway",
+            "https://cdn.discordapp.com/embed/avatars/0.png",
+            "https://status.discord.com/api/v2/summary.json"
+        ),
+        listOf(
+            "https://telegram.org/",
+            "https://web.telegram.org/a/",
+            "https://core.telegram.org/api",
+            "https://t.me/telegram"
+        ),
+        listOf(
+            "https://www.youtube.com/generate_204",
+            "https://i.ytimg.com/vi/jNQXAC9IVRw/default.jpg",
+            "https://www.youtube.com/robots.txt",
+            "https://www.youtube.com/favicon.ico"
+        )
     )
     const val UNSUPPORTED = -3
+    const val SKIPPED = -4
+    const val PARTIAL = -2
 
     private val pool = Executors.newCachedThreadPool()
 
@@ -42,7 +59,7 @@ object Services {
             .toString()
     }
 
-    fun delay(config: String, url: String, timeoutSeconds: Long = 12): Int {
+    fun delay(config: String, url: String, timeoutSeconds: Long = 9): Int {
         val method = try {
             Class.forName("libv2ray.Libv2ray")
                 .getMethod("measureOutboundDelay", String::class.java, String::class.java)
@@ -66,6 +83,25 @@ object Services {
             -1
         } catch (e: Exception) {
             -1
+        }
+    }
+
+    fun check(config: String, index: Int): Int {
+        val urls = mirrors[index]
+        val need = (urls.size + 1) / 2
+        val ok = ArrayList<Int>()
+        var failed = 0
+        for (u in urls) {
+            val v = delay(config, u)
+            if (v == UNSUPPORTED) return UNSUPPORTED
+            if (v > 0) ok.add(v) else failed++
+            if (ok.size >= need) break
+            if (failed > urls.size - need) break
+        }
+        return when {
+            ok.size >= need -> ok.sorted()[ok.size / 2]
+            ok.isNotEmpty() -> PARTIAL
+            else -> -1
         }
     }
 }

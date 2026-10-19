@@ -313,6 +313,21 @@ class AppState(private val app: Application) {
         }
     }
 
+    private fun probeConfigFor(server: Server): String? {
+        val plugin = try {
+            Plugins.forConf(app, server.conf)
+        } catch (e: Throwable) {
+            null
+        }
+        if (plugin != null) return null
+        if (Plugins.needsAwgEngine(app, server.conf)) return null
+        return try {
+            Services.probeConfig(Links.parse(Plugins.effectiveConf(app, server.conf)).outbound)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun checkServices() {
         if (checkingServices || servers.isEmpty()) return
         checkingServices = true
@@ -322,32 +337,23 @@ class AppState(private val app: Application) {
         val unsupported = AtomicBoolean(false)
         val counters = list.associate { it.id to AtomicInteger(Services.names.size) }
         scope.launch {
-            val gate = Semaphore(24)
+            val gate = Semaphore(8)
             list.flatMap { server ->
-                val wireguard = try {
-                    Links.parse(server.conf).outbound.optString("protocol") == "wireguard"
-                } catch (e: Exception) {
-                    false
-                }
+                val config = probeConfigFor(server)
+                val wireguard = Wg.isConf(server.conf)
                 val lock = Mutex()
                 Services.names.indices.map { index ->
                     launch(Dispatchers.IO) {
                         val run: suspend () -> Unit = {
-                            gate.withPermit {
-                                val config = try {
-                                    Services.probeConfig(Links.parse(server.conf).outbound)
-                                } catch (e: Exception) {
-                                    null
-                                }
-                                val value = if (config == null) -1 else Services.delay(config, Services.urls[index])
-                                if (value == Services.UNSUPPORTED) unsupported.set(true)
-                                synchronized(checks) {
-                                    val left = counters.getValue(server.id).decrementAndGet()
-                                    val current = checks[server.id] ?: ServiceCheck(busy = true)
-                                    checks[server.id] = current
-                                        .with(index, if (value > 0) value else -1)
-                                        .copy(busy = left > 0)
-                                }
+                            val value = if (config == null) Services.SKIPPED else gate.withPermit { Services.check(config, index) }
+                            if (value == Services.UNSUPPORTED) unsupported.set(true)
+                            val stored = if (value > 0 || value == Services.PARTIAL || value == Services.SKIPPED) value else -1
+                            synchronized(checks) {
+                                val left = counters.getValue(server.id).decrementAndGet()
+                                val current = checks[server.id] ?: ServiceCheck(busy = true)
+                                checks[server.id] = current
+                                    .with(index, stored)
+                                    .copy(busy = left > 0)
                             }
                         }
                         if (wireguard) lock.withLock { run() } else run()
@@ -852,8 +858,12 @@ class AppState(private val app: Application) {
         } catch (e: Throwable) {
             null
         }
+        if (plugin == null && Plugins.needsAwgEngine(app, target.conf)) {
+            error = "Для AmneziaWG нужен движок: Настройки, AmneziaWG, Движок"
+            return
+        }
         val outbound = if (plugin != null) "{}" else try {
-            Links.parse(target.conf).outbound.toString()
+            Links.parse(Plugins.effectiveConf(app, target.conf)).outbound.toString()
         } catch (e: Exception) {
             error = e.message ?: "Неверная конфигурация"
             return

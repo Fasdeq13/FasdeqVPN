@@ -423,9 +423,10 @@
     const c = sv ? checkOf(sv) : { ms: [null, null, null], busy: false };
     const btn = h("button", { class: "btn tonal sm" + (checking ? " busy" : ""), onclick: () => { if (!S.servers.length) { snack("Сначала добавьте сервер"); return; } Bridge.act("checkServices"); } }, icon(checking ? "refresh" : "bolt"), checking ? "Проверяю…" : "Проверить");
     const cells = S.services.names.map((n, i) => {
-      const v = c.ms[i];
-      const text = c.busy && v == null ? "…" : v == null ? "—" : v > 0 ? v + " мс" : "нет";
-      const cls = v != null && v > 0 ? (v < 400 ? "ok" : "slow") : v != null ? "bad" : "";
+      const raw = c.ms[i];
+      const v = raw === -4 ? null : raw;
+      const text = c.busy && v == null ? "…" : v == null ? "—" : v > 0 ? v + " мс" : v === -2 ? "частично" : "нет";
+      const cls = v != null && v > 0 ? (v < 400 ? "ok" : "slow") : v === -2 ? "slow" : v != null ? "bad" : "";
       const bestId = S.services.best[i];
       const better = bestId && bestId !== sv;
       return h("div", { class: "svc-cell" },
@@ -471,8 +472,9 @@
     const c = checkOf(id);
     const names = S.services.names;
     return h("span", { class: "dots", title: names.join(", ") }, [0, 1, 2].map((i) => {
-      const v = c.ms[i];
-      const cls = c.busy && v == null ? "busy" : v == null ? "" : v > 0 ? (v < 400 ? "ok" : "slow") : "bad";
+      const raw = c.ms[i];
+      const v = raw === -4 ? null : raw;
+      const cls = c.busy && v == null ? "busy" : v == null ? "" : v > 0 ? (v < 400 ? "ok" : "slow") : v === -2 ? "slow" : "bad";
       return h("i", { class: "dot " + cls });
     }));
   }
@@ -550,7 +552,7 @@
   }
 
   function addSheet() {
-    const ta = h("textarea", { class: "field", placeholder: "vless://…  trojan://…  ss://…  https://подписка", spellcheck: "false" });
+    const ta = h("textarea", { class: "field", placeholder: "vless://…  trojan://…  ss://…  wireguard://…  awg://…  vpn://…  https://подписка", spellcheck: "false" });
     const paste = h("button", { class: "btn text", onclick: async () => {
       const r = await Bridge.act("clipboard");
       if (r && r.text) ta.value = ta.value ? ta.value + "\n" + r.text : r.text;
@@ -602,7 +604,7 @@
       } else {
         const installed = P.list.filter((p) => p.family === cur);
         out.append(h("div", { class: "group-title" }, h("span", {}, "Установленные версии")));
-        out.append(installed.length ? h("div", { class: "list" }, installed.map((p) => plainRow(p.name + " " + p.version, p.description || "", h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("pluginDelete", p.key); } }, icon("del")), () => Bridge.act("wgEngine", p.key), P.engine === p.key))) : h("div", { class: "body" }, "Пока ничего не установлено"));
+        out.append(installed.length ? h("div", { class: "list" }, installed.map((p) => plainRow(p.name + " " + p.version, p.description || "", h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("pluginDelete", p.key); } }, icon("del")), () => Bridge.act(cur === "amneziawg" ? "awgEngine" : "wgEngine", p.key), (cur === "amneziawg" ? P.awgEngine : P.engine) === p.key))) : h("div", { class: "body" }, "Пока ничего не установлено"));
         const catFam = P.catalog ? P.catalog.find((c) => c.family === cur) : null;
         out.append(h("div", { class: "group-title" }, h("span", {}, "Доступные версии"), h("button", { class: "icon-btn sm", "aria-label": "Обновить список", onclick: async () => { const r = await Bridge.act("loadCatalog"); eng.msg = r && r.error ? r.error : ""; refreshLive(); } }, icon("refresh"))));
         if (!P.catalog) out.append(h("button", { class: "btn tonal", disabled: busy, onclick: async () => { const r = await Bridge.act("loadCatalog"); eng.msg = r && r.error ? r.error : ""; refreshLive(); } }, icon("download"), "Загрузить список версий"));
@@ -867,6 +869,54 @@
     return [h("div", { class: "group-title" }, h("span", {}, title)), h("div", { class: "list" }, rows)];
   }
 
+  function awgLabel() {
+    const P = S.plugins;
+    const list = P.list.filter((p) => p.family === "amneziawg");
+    if (!list.length) return "Не установлен. Нажмите, чтобы скачать";
+    const p = list.find((x) => x.key === P.awgEngine) || list[list.length - 1];
+    return p.name + " " + p.version;
+  }
+  function openAmnezia() {
+    eng.family = "amneziawg";
+    openEngine();
+  }
+  function awgParamsSheet() {
+    const P = S.plugins;
+    const cur = P.awgParams || {};
+    const keys = P.awgKeys || [];
+    const inputs = {};
+    const grid = h("div", { class: "awg-grid" }, keys.map((k) => {
+      const inp = h("input", { class: "hex wide", value: cur[k] || "", placeholder: "из конфига", spellcheck: "false", autocapitalize: "off" });
+      inputs[k] = inp;
+      return h("label", { class: "awg-cell" }, h("span", {}, k.toUpperCase()), inp);
+    }));
+    const force = { v: !!cur._force };
+    const toggle = h("button", { class: "switch" + (force.v ? " on" : ""), "aria-label": "Применять к WireGuard", onclick: () => { force.v = !force.v; toggle.classList.toggle("on", force.v); } });
+    const save = h("button", { class: "btn filled", onclick: async () => {
+      const o = { _force: force.v };
+      keys.forEach((k) => { o[k] = inputs[k].value.trim(); });
+      closeSheet();
+      await Bridge.act("awgParams", o);
+      snack("Параметры AmneziaWG сохранены");
+    } }, "Сохранить");
+    const reset = h("button", { class: "btn text", onclick: async () => { closeSheet(); await Bridge.act("awgParams", { _force: false }); snack("Параметры сброшены"); } }, "Сбросить");
+    openSheet(h("div", {}, h("h2", {}, "Параметры AmneziaWG"),
+      h("div", { class: "body" }, "Пустое поле: значение берётся из конфигурации. Заполненное заменяет его при каждом подключении через движок AmneziaWG. Jc, Jmin, Jmax: пакеты-мусор и их размер. S1-S4: добавки к размеру пакетов. H1-H4: заголовки. I1-I5: цепочки имитации протокола."),
+      grid,
+      h("div", { class: "row" }, h("div", { class: "grow" }, h("div", { class: "t" }, "Применять и к обычному WireGuard"), h("div", { class: "s" }, "Если сервер ждёт обфускацию, а в конфигурации её нет")), toggle),
+      h("div", { class: "actions" }, reset, save)));
+  }
+  function awgModeRow() {
+    const names = ["Как в конфиге", "Всё через AmneziaWG", "Всё через WireGuard"];
+    const buttons = names.map((n, i) => h("button", { onclick: () => { S.plugins.wgMode = i; refreshers.forEach((f) => f()); Bridge.act("awgMode", i); } }, n));
+    const row_ = h("div", { class: "row block" },
+      h("div", { class: "head" }, h("div", { class: "t" }, "Какой протокол запускать")),
+      h("div", { class: "seg plain" }, buttons),
+      h("div", { class: "s" }, "Как в конфиге: AmneziaWG идёт через движок AmneziaWG, обычный WireGuard через выбранный движок. Всё через AmneziaWG: обычный WireGuard тоже запускается этим движком. Всё через WireGuard: параметры AmneziaWG отбрасываются."));
+    refreshers.push(() => { const m = S.plugins.wgMode || 0; buttons.forEach((b, j) => b.classList.toggle("on", j === m)); });
+    return row_;
+  }
+
   function colorEditor() {
     const prev = h("div", { class: "rgb-preview" });
     const name = h("span", {}, "");
@@ -919,6 +969,8 @@
     const anim = () => S.settings.anim.all;
     const engRow = action("Движок WireGuard", "—", openEngine);
     refreshers.push(() => { const el = engRow.querySelector(".s"); const t = engineLabel(); if (el && el.textContent !== t) el.textContent = t; });
+    const awgRow = action("Движок AmneziaWG", "—", openAmnezia);
+    refreshers.push(() => { const el = awgRow.querySelector(".s"); const t = awgLabel(); if (el && el.textContent !== t) el.textContent = t; });
     put(
       h("div", { class: "top-row" }, h("h1", { class: "headline" }, "Настройки")),
       group("Цвет и тема",
@@ -977,6 +1029,10 @@
         sw("autoCheck", "Проверять сервисы автоматически", "Discord, Telegram и YouTube через каждый сервер, пока VPN включён"),
         slider("checkInterval", "Интервал проверки", 5, 240, 5, (x) => x + " мин", () => S.settings.autoCheck),
         action("Проверить сейчас", "Запустить проверку сервисов для всех серверов", () => { Bridge.act("checkServices"); snack("Проверяю сервисы…"); go("home"); })),
+      group("AmneziaWG",
+        awgModeRow(),
+        awgRow,
+        action("Параметры обфускации", "Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5", awgParamsSheet)),
       group("Движок и плагины",
         engRow,
         action("Плагины", "Протоколы, правила обхода, дополнения интерфейса", openPlugins)),

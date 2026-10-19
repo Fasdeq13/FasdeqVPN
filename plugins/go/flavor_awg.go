@@ -35,5 +35,9 @@ func startDevice(fd int, mtu int, uapi string) (func(), error) {
 		d.Close()
 		return nil, err
 	}
+	statsFn = func() string {
+		out, _ := d.IpcGet()
+		return out
+	}
 	return func() { d.Close() }, nil
 }

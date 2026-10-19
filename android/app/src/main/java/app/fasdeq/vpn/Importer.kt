@@ -21,7 +21,35 @@ object Importer {
     private val urlKeys = setOf("url", "link", "sublink", "subscription", "suburl", "uri", "href", "source")
     private val nameKeys = listOf("remarks", "name", "title", "ps", "alias")
 
+    private fun prepareWg(text: String): Prepared? {
+        val t = text.trim().removePrefix("\uFEFF")
+        if (t.isEmpty() || Wg.isConf(t)) return null
+        if (!t.contains("://") && !t.contains('\n')) {
+            val decoded = decodeBase64(t)?.trim()
+            if (decoded != null && Wg.isConf(decoded)) return Prepared(listOf(Source(decoded, false)), null)
+            if (decoded != null && decoded.contains("://")) return prepareWg(decoded)
+        }
+        val lines = t.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val mine = lines.filter { Wg.isScheme(it) || Wg.isAmnezia(it) }
+        if (mine.isEmpty()) return null
+        val items = ArrayList<Source>()
+        val errors = ArrayList<String>()
+        for (line in mine) {
+            try {
+                Wg.convert(line).forEach { items.add(Source(it, false)) }
+            } catch (e: Exception) {
+                errors.add(e.message ?: "Не удалось распознать")
+            }
+        }
+        val rest = lines.filter { it !in mine }
+        if (rest.isNotEmpty()) items.addAll(prepare(rest.joinToString("\n")).items)
+        if (items.isEmpty()) return Prepared(emptyList(), errors.firstOrNull() ?: "Не удалось распознать")
+        return Prepared(items.distinctBy { it.value }, null)
+    }
+
     fun prepare(text: String): Prepared {
+        val wg = prepareWg(text)
+        if (wg != null) return wg
         val hook = try {
             Plugins.prepare(FasdeqApp.appContext, text)
         } catch (e: Throwable) {

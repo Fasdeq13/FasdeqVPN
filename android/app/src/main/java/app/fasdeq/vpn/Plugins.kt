@@ -6,8 +6,6 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.zip.ZipInputStream
 
 data class PluginInfo(
@@ -39,6 +37,11 @@ data class CatalogFamily(val family: String, val name: String, val versions: Lis
 
 object Plugins {
     const val CATALOG_URL = "https://raw.githubusercontent.com/Fasdeq13/FasdeqVPN/main/plugins/catalog.json"
+    private val CATALOG_URLS = listOf(
+        CATALOG_URL,
+        "https://github.com/Fasdeq13/FasdeqVPN/raw/main/plugins/catalog.json",
+        "https://cdn.jsdelivr.net/gh/Fasdeq13/FasdeqVPN@main/plugins/catalog.json"
+    )
     val families = listOf("wireguard-go" to "WireGuard", "amneziawg" to "AmneziaWG")
 
     @Volatile
@@ -53,6 +56,9 @@ object Plugins {
     private const val PREFS = "fasdeq"
     private const val STATE = "plugins_state"
     private const val ENGINE = "wg_engine"
+    private const val AWG_ENGINE = "awg_engine"
+    private const val WG_MODE = "wg_mode"
+    private const val AWG_PARAMS = "awg_params"
     private val allowedExt = setOf("json", "so", "js", "css", "png", "svg", "txt", "md", "webp", "jpg")
 
     private fun root(context: Context): File {
@@ -137,9 +143,66 @@ object Plugins {
         st.remove(key)
         saveState(context, st)
         if (wgEngine(context) == key) setWgEngine(context, "")
+        if (awgEngine(context) == key) setAwgEngine(context, "")
     }
 
     fun wgEngine(context: Context): String = prefs(context).getString(ENGINE, "") ?: ""
+
+    fun awgEngine(context: Context): String = prefs(context).getString(AWG_ENGINE, "") ?: ""
+
+    fun setAwgEngine(context: Context, key: String) {
+        stamp++
+        prefs(context).edit().putString(AWG_ENGINE, key).apply()
+    }
+
+    fun wgMode(context: Context): Int = prefs(context).getInt(WG_MODE, 0).coerceIn(0, 2)
+
+    fun setWgMode(context: Context, value: Int) {
+        stamp++
+        prefs(context).edit().putInt(WG_MODE, value.coerceIn(0, 2)).apply()
+    }
+
+    fun awgParams(context: Context): JSONObject = try {
+        JSONObject(prefs(context).getString(AWG_PARAMS, "{}") ?: "{}")
+    } catch (e: Throwable) {
+        JSONObject()
+    }
+
+    fun setAwgParams(context: Context, value: JSONObject) {
+        val clean = JSONObject()
+        for (k in Wg.awgKeys) {
+            val v = value.optString(k, "").trim()
+            if (v.isNotEmpty()) clean.put(k, v)
+        }
+        clean.put("_force", value.optBoolean("_force", false))
+        stamp++
+        prefs(context).edit().putString(AWG_PARAMS, clean.toString()).apply()
+    }
+
+    private fun versionKey(v: String): List<Long> = Regex("[0-9]+").findAll(v).map { it.value.toLongOrNull() ?: 0L }.toList()
+
+    private fun compareVersions(a: String, b: String): Int {
+        val x = versionKey(a)
+        val y = versionKey(b)
+        for (i in 0 until maxOf(x.size, y.size)) {
+            val p = x.getOrElse(i) { 0L }
+            val q = y.getOrElse(i) { 0L }
+            if (p != q) return p.compareTo(q)
+        }
+        return 0
+    }
+
+    fun effectiveConf(context: Context, conf: String): String =
+        if (wgMode(context) == 2 && Wg.isAwg(conf)) Wg.stripAwg(conf) else conf
+
+    fun needsAwgEngine(context: Context, conf: String): Boolean =
+        Wg.isAwg(conf) && wgMode(context) != 2 && forConf(context, conf) == null
+
+    private fun pick(all: List<PluginInfo>, wanted: String, preferred: String): PluginInfo? {
+        val mine = all.filter { family(it) == wanted }
+        if (mine.isEmpty()) return null
+        return mine.firstOrNull { it.key == preferred } ?: mine.sortedWith { a, b -> compareVersions(a.version, b.version) }.last()
+    }
 
     fun setWgEngine(context: Context, key: String) {
         stamp++
@@ -207,21 +270,12 @@ object Plugins {
         return info
     }
 
-    fun download(url: String): ByteArray {
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 15_000
-        c.readTimeout = 60_000
-        c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", "FasdeqVPN")
-        try {
-            require(c.responseCode == 200) { "Сервер ответил " + c.responseCode }
-            return c.inputStream.readBytes()
-        } finally {
-            c.disconnect()
-        }
-    }
+    fun download(url: String): ByteArray = Net.get(url, "application/octet-stream", 90_000)
 
     private fun matches(info: PluginInfo, conf: String): Boolean {
+        val fam = family(info)
+        if (fam == "amneziawg") return Wg.isAwg(conf)
+        if (fam == "wireguard-go") return false
         val m = info.protocol?.optJSONObject("match") ?: return false
         val lower = conf.trim().lowercase()
         val schemes = m.optJSONArray("schemes")
@@ -250,16 +304,31 @@ object Plugins {
 
     fun forConf(context: Context, conf: String): PluginInfo? {
         val all = list(context).filter { enabled(context, it.key) && it.protocol != null && it.lib != null }
-        val specific = all.firstOrNull { matches(it, conf) }
-        if (specific != null) return specific
-        if (conf.contains("[Interface]", ignoreCase = true)) {
-            val chosen = wgEngine(context)
-            if (chosen.isNotEmpty()) {
-                val p = all.firstOrNull { it.key == chosen }
-                if (p != null && p.protocol?.optBoolean("handlesWireGuard", false) == true) return p
+        if (Wg.isConf(conf)) {
+            val awg = Wg.isAwg(conf)
+            val mode = wgMode(context)
+            val target = when {
+                mode == 1 -> "amneziawg"
+                mode == 2 -> "wireguard-go"
+                awg -> "amneziawg"
+                else -> ""
             }
+            if (target.isNotEmpty()) {
+                val preferred = if (target == "amneziawg") awgEngine(context) else wgEngine(context)
+                val p = pick(all, target, preferred)
+                if (p != null) return p
+                if (awg && mode != 2) return null
+            }
+            if (!awg || mode == 2) {
+                val chosen = wgEngine(context)
+                if (chosen.isNotEmpty()) {
+                    val p = all.firstOrNull { it.key == chosen }
+                    if (p != null && p.protocol?.optBoolean("handlesWireGuard", false) == true && family(p) != "amneziawg") return p
+                }
+            }
+            return null
         }
-        return null
+        return all.firstOrNull { matches(it, conf) }
     }
 
     fun wholeConfig(context: Context, text: String): Boolean {
@@ -319,8 +388,14 @@ object Plugins {
 
     fun label(context: Context, conf: String): String? = forConf(context, conf)?.protocol?.optString("label", "")?.ifBlank { null }
 
-    fun pluginConfig(context: Context, info: PluginInfo, conf: String): String =
-        JSONObject().put("conf", conf).put("settings", settings(context, info)).toString()
+    fun pluginConfig(context: Context, info: PluginInfo, conf: String): String {
+        var text = effectiveConf(context, conf)
+        if (family(info) == "amneziawg") {
+            val params = awgParams(context)
+            text = Wg.applyParams(text, params, params.optBoolean("_force", false) || wgMode(context) == 1)
+        }
+        return JSONObject().put("conf", text).put("settings", settings(context, info)).toString()
+    }
 
     fun rules(context: Context): JSONObject {
         val out = JSONObject()
@@ -361,7 +436,7 @@ object Plugins {
     fun loadCatalog(): String? {
         busy = "Загружаю каталог версий…"
         return try {
-            val o = JSONObject(String(download(CATALOG_URL)))
+            val o = JSONObject(String(Net.first(CATALOG_URLS, "application/json", 25_000), Charsets.UTF_8))
             val arr = o.optJSONArray("engines") ?: JSONArray()
             val list = ArrayList<CatalogFamily>()
             for (i in 0 until arr.length()) {
@@ -389,7 +464,8 @@ object Plugins {
             val bytes = download(url)
             busy = "Устанавливаю…"
             val info = install(context, ByteArrayInputStream(bytes), url.substringAfterLast('/').substringBefore('?'))
-            if (select && info.protocol?.optBoolean("handlesWireGuard", false) == true) setWgEngine(context, info.key)
+            if (select && family(info) == "amneziawg") setAwgEngine(context, info.key)
+            else if (select && info.protocol?.optBoolean("handlesWireGuard", false) == true) setWgEngine(context, info.key)
             null
         } catch (e: Throwable) {
             e.message ?: "Не удалось установить"
@@ -424,6 +500,10 @@ object Plugins {
         }
         out.put("list", items)
         out.put("engine", wgEngine(context))
+        out.put("awgEngine", awgEngine(context))
+        out.put("wgMode", wgMode(context))
+        out.put("awgParams", awgParams(context))
+        out.put("awgKeys", JSONArray(Wg.awgKeys))
         out.put("busy", busy ?: JSONObject.NULL)
         out.put("ui", JSONArray(uiFiles(context)))
         val cat = catalog

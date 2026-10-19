@@ -205,6 +205,21 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id)
                 push()
             }
+            "awgEngine" -> {
+                Plugins.setAwgEngine(host, text)
+                reply(id)
+                push()
+            }
+            "awgMode" -> {
+                Plugins.setWgMode(host, (value?.toString() ?: "0").trim().toIntOrNull() ?: 0)
+                reply(id)
+                push()
+            }
+            "awgParams" -> {
+                Plugins.setAwgParams(host, (value as? JSONObject) ?: JSONObject())
+                reply(id)
+                push()
+            }
             "checkUpdate" -> host.lifecycleScope.launch {
                 Updates.check(host, true)
                 val st = Updates.state
@@ -330,8 +345,8 @@ class WebBridge(private val host: WebUiActivity) {
     }
 
     private fun protoOf(conf: String): String {
+        if (Wg.isConf(conf)) return if (Wg.isAwg(conf)) "AmneziaWG" else "WireGuard"
         Plugins.label(host, conf)?.let { return it }
-        if (conf.contains("[Interface]", ignoreCase = true)) return "WireGuard"
         return when (val scheme = conf.substringBefore("://", "").lowercase()) {
             "vless" -> "VLESS"
             "vmess" -> "VMess"

@@ -8,7 +8,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
@@ -44,6 +48,10 @@ class FasdeqVpnService : VpnService() {
     @Volatile private var lastParams: Params? = null
     @Volatile private var userStop = false
     private val recoveries = ArrayList<Long>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var netCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var netCurrent: Network? = null
+    @Volatile private var netJob: Runnable? = null
     private var wake: PowerManager.WakeLock? = null
 
     private class Params(
@@ -362,7 +370,8 @@ class FasdeqVpnService : VpnService() {
                     coreFd = fd
                     core.startLoop(config, fd)
                     connectedAt = System.currentTimeMillis()
-                    if (outbound.optString("protocol") == "wireguard") watchdog(gen, core)
+                    watchdog(gen, core, outbound.optString("protocol") == "wireguard")
+                    registerNet(gen)
                     acquireWake()
                     VpnBridge.write(this, true, serverId)
                     VpnBridge.send(this, true, null)
@@ -468,32 +477,165 @@ class FasdeqVpnService : VpnService() {
         val started = JSONObject(Native.pluginCall(handle, "start", params.pluginConf, fd, 0L))
         if (!started.optBoolean("ok")) throw IllegalStateException(started.optString("error", "Плагин не запустился"))
         connectedAt = System.currentTimeMillis()
+        pluginWatch(generation, handle)
+        registerNet(generation)
         acquireWake()
         VpnBridge.write(this, true, serverId)
         VpnBridge.send(this, true, null)
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(true))
     }
 
-    private fun watchdog(gen: Int, core: CoreController) {
+    private fun probe(core: CoreController): Boolean {
+        for (u in listOf("https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204")) {
+            val ok = try {
+                core.measureDelay(u) > 0
+            } catch (e: Throwable) {
+                false
+            }
+            if (ok) return true
+        }
+        return false
+    }
+
+    private fun watchdog(gen: Int, core: CoreController, wireguard: Boolean) {
         Thread {
             var misses = 0
             try {
-                Thread.sleep(20_000L)
+                Thread.sleep(15_000L)
                 while (gen == generation && !stopping && !halted && !userStop) {
-                    val ok = try {
-                        core.measureDelay("https://www.gstatic.com/generate_204") > 0
-                    } catch (e: Throwable) {
-                        false
+                    if (netCurrent == null) {
+                        misses = 0
+                        Thread.sleep(5_000L)
+                        continue
                     }
-                    if (ok) misses = 0 else misses++
-                    if (misses >= 2) {
-                        if (gen == generation && !stopping) recover("WireGuard перестал отвечать, переподключаю")
+                    if (probe(core)) misses = 0 else misses++
+                    if (misses >= (if (wireguard) 2 else 3)) {
+                        if (gen == generation && !stopping) {
+                            recover(if (wireguard) "WireGuard перестал отвечать, переподключаю" else "Соединение зависло, переподключаю")
+                        }
                         return@Thread
                     }
-                    Thread.sleep(if (misses > 0) 5_000L else 25_000L)
+                    Thread.sleep(if (misses > 0) 4_000L else 20_000L)
                 }
             } catch (e: Throwable) {
             }
+        }.start()
+    }
+
+    private fun pluginStats(handle: Long): JSONObject? = try {
+        val raw = JSONObject(Native.pluginCall(handle, "stats", "", -1, 0L))
+        if (raw.optBoolean("ok")) JSONObject(raw.getString("value")) else null
+    } catch (e: Throwable) {
+        null
+    }
+
+    private fun pluginWatch(gen: Int, handle: Long) {
+        Thread {
+            try {
+                val begin = SystemClock.elapsedRealtime()
+                var lastRx = -1L
+                var lastTx = 0L
+                var stallSince = 0L
+                var shaken = false
+                while (gen == generation && !stopping && !halted && !userStop) {
+                    Thread.sleep(3_000L)
+                    val v = pluginStats(handle) ?: continue
+                    val now = SystemClock.elapsedRealtime()
+                    val hs = v.optLong("hs", 0L)
+                    val rx = v.optLong("rx", 0L)
+                    val tx = v.optLong("tx", 0L)
+                    if (hs > 0L) shaken = true
+                    if (!shaken && now - begin > 25_000L) {
+                        halt("Нет рукопожатия с сервером. Проверьте ключи, порт и параметры AmneziaWG (Jc, S1, S2, H1-H4)")
+                        return@Thread
+                    }
+                    if (shaken) {
+                        if (rx != lastRx) {
+                            lastRx = rx
+                            stallSince = 0L
+                        } else if (tx - lastTx > 4096L && netCurrent != null) {
+                            if (stallSince == 0L) stallSince = now
+                            if (now - stallSince > 45_000L) {
+                                recover("Туннель перестал отвечать, переподключаю")
+                                return@Thread
+                            }
+                        }
+                        lastTx = tx
+                    }
+                }
+            } catch (e: Throwable) {
+            }
+        }.start()
+    }
+
+    private fun applyUnderlying(network: Network?) {
+        try {
+            setUnderlyingNetworks(if (network == null) null else arrayOf(network))
+        } catch (e: Throwable) {
+        }
+    }
+
+    private fun registerNet(gen: Int) {
+        unregisterNet()
+        val cm: ConnectivityManager? = try {
+            getSystemService(ConnectivityManager::class.java)
+        } catch (e: Throwable) {
+            null
+        }
+        if (cm == null) return
+        netCurrent = try {
+            cm.activeNetwork
+        } catch (e: Throwable) {
+            null
+        }
+        applyUnderlying(netCurrent)
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val prev = netCurrent
+                netCurrent = network
+                applyUnderlying(network)
+                if (prev != null && prev != network && gen == generation && !halted && !userStop && !stopping) {
+                    scheduleReconnect(gen)
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (network == netCurrent) netCurrent = null
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(cb)
+            netCallback = cb
+        } catch (e: Throwable) {
+        }
+    }
+
+    private fun unregisterNet() {
+        val cb = netCallback
+        netCallback = null
+        netJob?.let { mainHandler.removeCallbacks(it) }
+        netJob = null
+        if (cb != null) {
+            try {
+                getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb)
+            } catch (e: Throwable) {
+            }
+        }
+    }
+
+    private fun scheduleReconnect(gen: Int) {
+        netJob?.let { mainHandler.removeCallbacks(it) }
+        val job = Runnable {
+            if (gen == generation && !halted && !userStop && !stopping) reconnect()
+        }
+        netJob = job
+        mainHandler.postDelayed(job, 2_000L)
+    }
+
+    private fun reconnect() {
+        val params = lastParams ?: return
+        Thread {
+            if (!halted && !userStop) start(params)
         }.start()
     }
 
@@ -516,6 +658,7 @@ class FasdeqVpnService : VpnService() {
 
     private fun closeCore(wait: Long) {
         stopping = true
+        unregisterNet()
         val core = controller
         controller = null
         val plugin = pluginHandle

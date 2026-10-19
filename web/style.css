@@ -401,3 +401,7 @@ body.no-controls .seg .thumb { transition: none !important; }
 .group-title.tight { padding: 14px 2px 4px; }
 .seg.plain button { transition: background calc(200ms * var(--k)) var(--ease), color calc(200ms * var(--k)) var(--ease); }
 .seg.plain button.on { background: var(--primary); }
+
+.awg-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.awg-cell{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.awg-cell input{width:100%;box-sizing:border-box}

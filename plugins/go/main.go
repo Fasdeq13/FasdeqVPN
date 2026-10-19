@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -19,17 +20,24 @@ import (
 
 var (
 	mu      sync.Mutex
+	outMu   sync.Mutex
 	stopFn  func()
+	statsFn func() string
 	lastErr string
-	outBuf  *C.char
+	outRing [16]*C.char
+	outIdx  int
 )
 
 func ret(s string) *C.char {
-	if outBuf != nil {
-		C.free(unsafe.Pointer(outBuf))
+	outMu.Lock()
+	defer outMu.Unlock()
+	if outRing[outIdx] != nil {
+		C.free(unsafe.Pointer(outRing[outIdx]))
 	}
-	outBuf = C.CString(s)
-	return outBuf
+	outRing[outIdx] = C.CString(s)
+	p := outRing[outIdx]
+	outIdx = (outIdx + 1) % len(outRing)
+	return p
 }
 
 type request struct {
@@ -208,6 +216,7 @@ func fq_start(config *C.char, fd C.int) C.int {
 		stopFn()
 		stopFn = nil
 	}
+	statsFn = nil
 	p, err := decode(config)
 	if err != nil {
 		lastErr = err.Error()
@@ -235,10 +244,39 @@ func fq_start(config *C.char, fd C.int) C.int {
 func fq_stop() {
 	mu.Lock()
 	defer mu.Unlock()
+	statsFn = nil
 	if stopFn != nil {
 		stopFn()
 		stopFn = nil
 	}
+}
+
+//export fq_stats
+func fq_stats() *C.char {
+	var rx, tx, hs int64
+	if fn := statsFn; fn != nil {
+		for _, line := range strings.Split(fn(), "\n") {
+			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if !ok {
+				continue
+			}
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				continue
+			}
+			switch k {
+			case "rx_bytes":
+				rx += n
+			case "tx_bytes":
+				tx += n
+			case "last_handshake_time_sec":
+				if n > hs {
+					hs = n
+				}
+			}
+		}
+	}
+	return ret(fmt.Sprintf(`{"rx":%d,"tx":%d,"hs":%d}`, rx, tx, hs))
 }
 
 //export fq_last_error

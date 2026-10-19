@@ -150,34 +150,19 @@ object Cores {
         }
     }
 
-    private fun http(url: String): ByteArray {
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 15000
-        c.readTimeout = 60000
-        c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", "FasdeqVPN/1.2")
-        c.setRequestProperty("Accept", "application/vnd.github+json")
-        try {
-            require(c.responseCode in 200..299) { "HTTP ${c.responseCode}" }
-            return c.inputStream.use { it.readBytes() }
-        } finally {
-            c.disconnect()
-        }
-    }
+    private fun http(url: String, accept: String = "application/vnd.github+json"): ByteArray = Net.get(url, accept)
 
-    fun releases(): List<Release> {
-        require(abi() == "arm64-v8a") { "Готовые сборки Xray для Android есть только для arm64-v8a" }
-        val asset = "Xray-android-arm64-v8a.zip"
-        val arr = JSONArray(
-            String(http("https://api.github.com/repos/XTLS/Xray-core/releases?per_page=20"), Charsets.UTF_8)
-        )
+    private const val ASSET = "Xray-android-arm64-v8a.zip"
+
+    private fun fromApi(): List<Release> {
+        val arr = JSONArray(String(http("https://api.github.com/repos/XTLS/Xray-core/releases?per_page=20"), Charsets.UTF_8))
         val result = ArrayList<Release>()
         for (i in 0 until arr.length()) {
             val r = arr.getJSONObject(i)
             val assets = r.optJSONArray("assets") ?: continue
             for (j in 0 until assets.length()) {
                 val a = assets.getJSONObject(j)
-                if (a.optString("name") == asset) {
+                if (a.optString("name") == ASSET) {
                     result.add(Release(r.optString("tag_name"), a.optString("browser_download_url"), a.optLong("size")))
                 }
             }
@@ -185,5 +170,23 @@ object Cores {
         return result
     }
 
-    fun download(url: String): ByteArray = http(url)
+    private fun fromFeed(): List<Release> {
+        val xml = String(http("https://github.com/XTLS/Xray-core/releases.atom", "application/atom+xml"), Charsets.UTF_8)
+        val tags = Regex("releases/tag/([^\"<]+)").findAll(xml).map { it.groupValues[1] }.distinct().take(20).toList()
+        require(tags.isNotEmpty()) { "Не удалось получить список версий" }
+        return tags.map { Release(it, "https://github.com/XTLS/Xray-core/releases/download/$it/$ASSET", 0L) }
+    }
+
+    fun releases(): List<Release> {
+        require(abi() == "arm64-v8a") { "Готовые сборки Xray для Android есть только для arm64-v8a" }
+        val api = try {
+            fromApi()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        if (api.isNotEmpty()) return api
+        return fromFeed()
+    }
+
+    fun download(url: String): ByteArray = Net.get(url, "application/octet-stream")
 }

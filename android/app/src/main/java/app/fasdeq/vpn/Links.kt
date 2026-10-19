@@ -21,6 +21,8 @@ object Links {
     }
 
     fun parse(raw: String): Parsed {
+        val head = raw.trim()
+        if (Wg.isScheme(head) || Wg.isAmnezia(head)) return parse(Wg.convert(head).first())
         val native = NativeCore.call { Native.parseLink(raw) }
         if (native != null) {
             return Parsed(
