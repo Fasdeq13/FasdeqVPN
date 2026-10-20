@@ -49,6 +49,15 @@ class MainActivity : ComponentActivity() {
             return
         }
         enableEdgeToEdge()
+        val sp = getSharedPreferences("fasdeq", Context.MODE_PRIVATE)
+        if (!sp.getBoolean("notice18", false)) {
+            sp.edit().putBoolean("notice18", true).apply()
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Старый интерфейс")
+                .setMessage("С версии 2.0 старый интерфейс (Compose) будет удалён. Сейчас он уже не обновляется.")
+                .setPositiveButton("Понятно", null)
+                .show()
+        }
         askNotifications()
         if (savedInstanceState == null) {
             val st = FasdeqApp.state

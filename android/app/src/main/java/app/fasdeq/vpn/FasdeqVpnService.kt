@@ -11,8 +11,6 @@ import android.graphics.drawable.Icon
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.VpnService
-import android.os.Handler
-import android.os.Looper
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
@@ -31,12 +29,12 @@ import libv2ray.Libv2ray
 class FasdeqVpnService : VpnService() {
 
     private val lock = Any()
-    private val prefs by lazy { getSharedPreferences("vpn_service", Context.MODE_PRIVATE) }
 
     @Volatile private var iface: ParcelFileDescriptor? = null
     @Volatile private var controller: CoreController? = null
     @Volatile private var coreFd = -1
     @Volatile private var pluginHandle = 0L
+    @Volatile private var awgHandle = -1
     @Volatile private var stopping = false
     @Volatile private var halted = false
     @Volatile private var generation = 0
@@ -45,13 +43,8 @@ class FasdeqVpnService : VpnService() {
     @Volatile private var serverId: String? = null
     @Volatile private var connectedAt = 0L
     @Volatile private var child: java.lang.Process? = null
-    @Volatile private var lastParams: Params? = null
     @Volatile private var userStop = false
-    private val recoveries = ArrayList<Long>()
-    private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var netCallback: ConnectivityManager.NetworkCallback? = null
-    @Volatile private var netCurrent: Network? = null
-    @Volatile private var netJob: Runnable? = null
     private var wake: PowerManager.WakeLock? = null
 
     private class Params(
@@ -62,14 +55,15 @@ class FasdeqVpnService : VpnService() {
         val tuning: Tuning = Tuning(),
         val rules: String = "",
         val pluginLib: String = "",
-        val pluginConf: String = ""
+        val pluginConf: String = "",
+        val awgConf: String = ""
     )
 
     private fun handler(gen: Int) = object : CoreCallbackHandler {
         override fun startup(): Long = 0
 
         override fun shutdown(): Long {
-            if (gen == generation && !stopping) recover("Соединение прервано")
+            if (gen == generation && !stopping) halt("Соединение прервано")
             return 0
         }
 
@@ -94,27 +88,12 @@ class FasdeqVpnService : VpnService() {
                     Tuning.fromJson(intent.getStringExtra(EXTRA_TUNING)),
                     intent.getStringExtra(EXTRA_RULES) ?: "",
                     intent.getStringExtra(EXTRA_PLUGIN_LIB) ?: "",
-                    intent.getStringExtra(EXTRA_PLUGIN_CONF) ?: ""
+                    intent.getStringExtra(EXTRA_PLUGIN_CONF) ?: "",
+                    intent.getStringExtra(EXTRA_AWG_CONF) ?: ""
                 )
             }
             serverName = intent.getStringExtra(EXTRA_NAME) ?: ""
             serverId = intent.getStringExtra(EXTRA_ID)
-        } else if (intent == null && prefs.getBoolean(KEY_RUN, false)) {
-            val outbound = prefs.getString(KEY_CONFIG, null)
-            if (outbound != null) {
-                params = Params(
-                    outbound,
-                    prefs.getString(KEY_CORE, "") ?: "",
-                    (prefs.getString(KEY_DNS, "1.1.1.1,8.8.8.8") ?: "1.1.1.1,8.8.8.8").split(',').filter { it.isNotBlank() },
-                    prefs.getInt(KEY_MTU, 1500),
-                    Tuning.fromJson(prefs.getString(KEY_TUNING, null)),
-                    prefs.getString(KEY_RULES, "") ?: "",
-                    prefs.getString(KEY_PLUGIN_LIB, "") ?: "",
-                    prefs.getString(KEY_PLUGIN_CONF, "") ?: ""
-                )
-            }
-            serverName = prefs.getString(KEY_NAME, "") ?: ""
-            serverId = prefs.getString(KEY_ID, null)
         }
         enterForeground(false)
         if (params == null) {
@@ -125,28 +104,16 @@ class FasdeqVpnService : VpnService() {
         epoch++
         halted = false
         userStop = false
-        lastParams = params
-        synchronized(recoveries) { recoveries.clear() }
-        prefs.edit()
-            .putBoolean(KEY_RUN, true)
-            .putString(KEY_CONFIG, params.outbound)
-            .putString(KEY_CORE, params.core)
-            .putString(KEY_DNS, params.dns.joinToString(","))
-            .putInt(KEY_MTU, params.mtu)
-            .putString(KEY_TUNING, params.tuning.toJson())
-            .putString(KEY_RULES, params.rules)
-            .putString(KEY_PLUGIN_LIB, params.pluginLib)
-            .putString(KEY_PLUGIN_CONF, params.pluginConf)
-            .putString(KEY_NAME, serverName)
-            .putString(KEY_ID, serverId)
-            .commit()
         start(params)
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun buildNotification(connected: Boolean): Notification {
-        val channel = NotificationChannel(CHANNEL, "Состояние VPN", NotificationManager.IMPORTANCE_LOW)
+        val channel = NotificationChannel(CHANNEL, "Состояние VPN", NotificationManager.IMPORTANCE_MIN)
         channel.setShowBadge(false)
+        channel.setSound(null, null)
+        channel.enableVibration(false)
+        getSystemService(NotificationManager::class.java).deleteNotificationChannel("vpn_state")
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         val open = PendingIntent.getActivity(
             this,
@@ -164,11 +131,12 @@ class FasdeqVpnService : VpnService() {
         val target = if (serverName.isBlank()) "серверу" else serverName
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_power)
-            .setContentTitle("FasdeqVPN")
+            .setContentTitle("Tunn")
             .setContentText(if (connected) "Вы подключены к $target" else "Подключение к $target…")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
+            .setVisibility(Notification.VISIBILITY_SECRET)
             .setContentIntent(open)
             .addAction(
                 Notification.Action.Builder(
@@ -203,7 +171,7 @@ class FasdeqVpnService : VpnService() {
         releaseWake()
         try {
             val pm = getSystemService(PowerManager::class.java)
-            val lockObj = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "fasdeq:vpn")
+            val lockObj = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tunn:vpn")
             lockObj.setReferenceCounted(false)
             lockObj.acquire()
             wake = lockObj
@@ -313,7 +281,7 @@ class FasdeqVpnService : VpnService() {
                         process.waitFor()
                     } catch (e: Throwable) {
                     }
-                    if (child === process && !stopping && !halted) recover("Ядро Xray остановилось")
+                    if (child === process && !stopping && !halted) halt("Ядро Xray остановилось")
                 }.start()
                 return port
             } catch (e: Exception) {
@@ -331,6 +299,10 @@ class FasdeqVpnService : VpnService() {
                     generation++
                     stopping = false
                     val gen = generation
+                    if (params.awgConf.isNotEmpty()) {
+                        startAwg(params)
+                        return@synchronized
+                    }
                     if (params.pluginLib.isNotEmpty()) {
                         startPlugin(params)
                         return@synchronized
@@ -346,7 +318,7 @@ class FasdeqVpnService : VpnService() {
                     }
                     val t = params.tuning
                     val builder = Builder()
-                        .setSession("FasdeqVPN")
+                        .setSession("Tunn")
                         .setMtu(params.mtu)
                         .addAddress("172.19.0.1", 30)
                         .addRoute("0.0.0.0", 0)
@@ -370,8 +342,7 @@ class FasdeqVpnService : VpnService() {
                     coreFd = fd
                     core.startLoop(config, fd)
                     connectedAt = System.currentTimeMillis()
-                    watchdog(gen, core, outbound.optString("protocol") == "wireguard")
-                    registerNet(gen)
+                            registerNet()
                     acquireWake()
                     VpnBridge.write(this, true, serverId)
                     VpnBridge.send(this, true, null)
@@ -380,8 +351,7 @@ class FasdeqVpnService : VpnService() {
                 } catch (e: Throwable) {
                     closeCore(1500)
                     releaseWake()
-                    prefs.edit().putBoolean(KEY_RUN, false).remove(KEY_CONFIG).commit()
-                    VpnBridge.write(this, false, null)
+                                VpnBridge.write(this, false, null)
                     VpnBridge.send(this, false, e.message ?: "Не удалось запустить")
                     stopForegroundCompat()
                     stopSelf()
@@ -443,7 +413,7 @@ class FasdeqVpnService : VpnService() {
         val v = prep.getJSONObject("value")
         if (v.has("error")) throw IllegalStateException(v.optString("error"))
         val t = params.tuning
-        val builder = Builder().setSession("FasdeqVPN").setMtu(v.optInt("mtu", params.mtu))
+        val builder = Builder().setSession("Tunn").setMtu(v.optInt("mtu", params.mtu))
         val addresses = strings(v.optJSONArray("address"))
         if (addresses.isEmpty()) builder.addAddress("172.19.0.1", 30)
         for (a in addresses) {
@@ -477,49 +447,70 @@ class FasdeqVpnService : VpnService() {
         val started = JSONObject(Native.pluginCall(handle, "start", params.pluginConf, fd, 0L))
         if (!started.optBoolean("ok")) throw IllegalStateException(started.optString("error", "Плагин не запустился"))
         connectedAt = System.currentTimeMillis()
-        pluginWatch(generation, handle)
-        registerNet(generation)
+        tunnelWatch(generation) { pluginStats(handle) }
+        registerNet()
         acquireWake()
         VpnBridge.write(this, true, serverId)
         VpnBridge.send(this, true, null)
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(true))
     }
 
-    private fun probe(core: CoreController): Boolean {
-        for (u in listOf("https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204")) {
-            val ok = try {
-                core.measureDelay(u) > 0
-            } catch (e: Throwable) {
-                false
-            }
-            if (ok) return true
-        }
-        return false
-    }
-
-    private fun watchdog(gen: Int, core: CoreController, wireguard: Boolean) {
-        Thread {
-            var misses = 0
+    private fun startAwg(params: Params) {
+        val doc = Wg.parseDoc(params.awgConf)
+        if (doc.peers.isEmpty() || (doc.iface["privatekey"] ?: "").isEmpty()) throw IllegalStateException("Неверная конфигурация AmneziaWG")
+        val quick = Wg.quickResolved(params.awgConf)
+        val t = params.tuning
+        val mtu = (doc.iface["mtu"]?.toIntOrNull() ?: 1280).coerceIn(1200, 1500)
+        val builder = Builder().setSession("Tunn").setMtu(mtu)
+        var added = 0
+        for (a in (doc.iface["address"] ?: "").split(',')) {
+            val c = cidr(a.trim()) ?: continue
             try {
-                Thread.sleep(15_000L)
-                while (gen == generation && !stopping && !halted && !userStop) {
-                    if (netCurrent == null) {
-                        misses = 0
-                        Thread.sleep(5_000L)
-                        continue
-                    }
-                    if (probe(core)) misses = 0 else misses++
-                    if (misses >= (if (wireguard) 2 else 3)) {
-                        if (gen == generation && !stopping) {
-                            recover(if (wireguard) "WireGuard перестал отвечать, переподключаю" else "Соединение зависло, переподключаю")
-                        }
-                        return@Thread
-                    }
-                    Thread.sleep(if (misses > 0) 4_000L else 20_000L)
-                }
-            } catch (e: Throwable) {
+                builder.addAddress(c.first, c.second)
+                added++
+            } catch (e: Exception) {
             }
-        }.start()
+        }
+        if (added == 0) builder.addAddress("172.19.0.1", 30)
+        val routes = ArrayList<String>()
+        for (p in doc.peers) routes.addAll((p["allowedips"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() })
+        for (r in routes.ifEmpty { listOf("0.0.0.0/0", "::/0") }) {
+            val c = cidr(r) ?: continue
+            if (!t.ipv6 && c.first.contains(':')) continue
+            try {
+                builder.addRoute(c.first, c.second)
+            } catch (e: Exception) {
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 29) builder.setMetered(!t.unmetered)
+        applyApps(builder, t, parseRules(params.rules))
+        val dns = (doc.iface["dns"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { params.dns }
+        for (d in dns) {
+            try {
+                builder.addDnsServer(d)
+            } catch (e: Exception) {
+            }
+        }
+        builder.setBlocking(true)
+        val tun = builder.establish() ?: throw IllegalStateException("Не удалось создать VPN-интерфейс")
+        iface = tun
+        val fd = tun.dup().detachFd()
+        coreFd = fd
+        val handle = Awg.turnOn("fasdeq", fd, quick, dataDir.absolutePath)
+        if (handle < 0) throw IllegalStateException("AmneziaWG не запустился (код $handle)")
+        awgHandle = handle
+        try {
+            protect(Awg.socketV4(handle))
+            protect(Awg.socketV6(handle))
+        } catch (e: Throwable) {
+        }
+        connectedAt = System.currentTimeMillis()
+        tunnelWatch(generation) { Awg.stats(handle) }
+        registerNet()
+        acquireWake()
+        VpnBridge.write(this, true, serverId)
+        VpnBridge.send(this, true, null)
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(true))
     }
 
     private fun pluginStats(handle: Long): JSONObject? = try {
@@ -529,38 +520,17 @@ class FasdeqVpnService : VpnService() {
         null
     }
 
-    private fun pluginWatch(gen: Int, handle: Long) {
+    private fun tunnelWatch(gen: Int, stats: () -> JSONObject?) {
         Thread {
             try {
                 val begin = SystemClock.elapsedRealtime()
-                var lastRx = -1L
-                var lastTx = 0L
-                var stallSince = 0L
-                var shaken = false
                 while (gen == generation && !stopping && !halted && !userStop) {
                     Thread.sleep(3_000L)
-                    val v = pluginStats(handle) ?: continue
-                    val now = SystemClock.elapsedRealtime()
-                    val hs = v.optLong("hs", 0L)
-                    val rx = v.optLong("rx", 0L)
-                    val tx = v.optLong("tx", 0L)
-                    if (hs > 0L) shaken = true
-                    if (!shaken && now - begin > 25_000L) {
+                    val v = stats() ?: continue
+                    if (v.optLong("hs", 0L) > 0L) return@Thread
+                    if (SystemClock.elapsedRealtime() - begin > 25_000L) {
                         halt("Нет рукопожатия с сервером. Проверьте ключи, порт и параметры AmneziaWG (Jc, S1, S2, H1-H4)")
                         return@Thread
-                    }
-                    if (shaken) {
-                        if (rx != lastRx) {
-                            lastRx = rx
-                            stallSince = 0L
-                        } else if (tx - lastTx > 4096L && netCurrent != null) {
-                            if (stallSince == 0L) stallSince = now
-                            if (now - stallSince > 45_000L) {
-                                recover("Туннель перестал отвечать, переподключаю")
-                                return@Thread
-                            }
-                        }
-                        lastTx = tx
                     }
                 }
             } catch (e: Throwable) {
@@ -575,7 +545,7 @@ class FasdeqVpnService : VpnService() {
         }
     }
 
-    private fun registerNet(gen: Int) {
+    private fun registerNet() {
         unregisterNet()
         val cm: ConnectivityManager? = try {
             getSystemService(ConnectivityManager::class.java)
@@ -583,24 +553,14 @@ class FasdeqVpnService : VpnService() {
             null
         }
         if (cm == null) return
-        netCurrent = try {
+        applyUnderlying(try {
             cm.activeNetwork
         } catch (e: Throwable) {
             null
-        }
-        applyUnderlying(netCurrent)
+        })
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val prev = netCurrent
-                netCurrent = network
                 applyUnderlying(network)
-                if (prev != null && prev != network && gen == generation && !halted && !userStop && !stopping) {
-                    scheduleReconnect(gen)
-                }
-            }
-
-            override fun onLost(network: Network) {
-                if (network == netCurrent) netCurrent = null
             }
         }
         try {
@@ -613,30 +573,12 @@ class FasdeqVpnService : VpnService() {
     private fun unregisterNet() {
         val cb = netCallback
         netCallback = null
-        netJob?.let { mainHandler.removeCallbacks(it) }
-        netJob = null
         if (cb != null) {
             try {
                 getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb)
             } catch (e: Throwable) {
             }
         }
-    }
-
-    private fun scheduleReconnect(gen: Int) {
-        netJob?.let { mainHandler.removeCallbacks(it) }
-        val job = Runnable {
-            if (gen == generation && !halted && !userStop && !stopping) reconnect()
-        }
-        netJob = job
-        mainHandler.postDelayed(job, 2_000L)
-    }
-
-    private fun reconnect() {
-        val params = lastParams ?: return
-        Thread {
-            if (!halted && !userStop) start(params)
-        }.start()
     }
 
     private fun closeTun() {
@@ -661,6 +603,18 @@ class FasdeqVpnService : VpnService() {
         unregisterNet()
         val core = controller
         controller = null
+        val awg = awgHandle
+        awgHandle = -1
+        if (awg >= 0) {
+            val off = Thread {
+                try {
+                    Awg.turnOff(awg)
+                } catch (e: Throwable) {
+                }
+            }
+            off.start()
+            off.join(wait)
+        }
         val plugin = pluginHandle
         pluginHandle = 0L
         if (plugin != 0L) {
@@ -688,28 +642,6 @@ class FasdeqVpnService : VpnService() {
         killChild()
     }
 
-    private fun recover(message: String) {
-        val params = lastParams
-        val now = SystemClock.elapsedRealtime()
-        var allowed = false
-        synchronized(recoveries) {
-            recoveries.removeAll { now - it > 120_000L }
-            allowed = params != null && params.tuning.reconnect && recoveries.size < params.tuning.retries
-            if (allowed) recoveries.add(now)
-        }
-        if (params == null || halted || userStop || !allowed) {
-            halt(message)
-            return
-        }
-        Thread {
-            try {
-                Thread.sleep(params.tuning.retryDelay * 1000L)
-            } catch (e: Throwable) {
-            }
-            if (!halted && !userStop) start(params)
-        }.start()
-    }
-
     private fun halt(message: String?, force: Boolean = false) {
         synchronized(this) {
             if (halted && !force) return
@@ -717,7 +649,6 @@ class FasdeqVpnService : VpnService() {
         }
         val mine = epoch
         stopping = true
-        prefs.edit().putBoolean(KEY_RUN, false).remove(KEY_CONFIG).commit()
         VpnBridge.write(this, false, null)
         VpnBridge.send(this, false, message)
         releaseWake()
@@ -731,7 +662,9 @@ class FasdeqVpnService : VpnService() {
                 Thread.sleep(120)
             } catch (e: Throwable) {
             }
-            if (mine == epoch) Process.killProcess(Process.myPid())
+            if (mine == epoch) {
+                if (userStop) Process.killProcess(Process.myPid()) else stopSelf()
+            }
         }.start()
     }
 
@@ -759,18 +692,8 @@ class FasdeqVpnService : VpnService() {
         const val EXTRA_RULES = "rules"
         const val EXTRA_PLUGIN_LIB = "plugin_lib"
         const val EXTRA_PLUGIN_CONF = "plugin_conf"
-        private const val KEY_RUN = "run"
-        private const val KEY_CONFIG = "config"
-        private const val KEY_CORE = "core"
-        private const val KEY_DNS = "dns"
-        private const val KEY_MTU = "mtu"
-        private const val KEY_TUNING = "tuning"
-        private const val KEY_NAME = "name"
-        private const val KEY_ID = "id"
-        private const val KEY_RULES = "rules"
-        private const val KEY_PLUGIN_LIB = "plugin_lib"
-        private const val KEY_PLUGIN_CONF = "plugin_conf"
-        private const val CHANNEL = "vpn_state"
+        const val EXTRA_AWG_CONF = "awg_conf"
+        private const val CHANNEL = "vpn_state_quiet"
         private const val NOTIFICATION_ID = 1
     }
 }

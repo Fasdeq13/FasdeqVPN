@@ -18,7 +18,7 @@ object Net {
             c.instanceFollowRedirects = false
             c.connectTimeout = 15_000
             c.readTimeout = timeoutMs
-            c.setRequestProperty("User-Agent", "FasdeqVPN/1.3")
+            c.setRequestProperty("User-Agent", "Tunn/1.8")
             c.setRequestProperty("Accept", accept)
             try {
                 val code = c.responseCode

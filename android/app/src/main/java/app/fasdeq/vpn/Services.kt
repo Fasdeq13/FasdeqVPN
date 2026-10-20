@@ -87,21 +87,11 @@ object Services {
     }
 
     fun check(config: String, index: Int): Int {
-        val urls = mirrors[index]
-        val need = (urls.size + 1) / 2
-        val ok = ArrayList<Int>()
-        var failed = 0
-        for (u in urls) {
-            val v = delay(config, u)
+        for (u in mirrors[index]) {
+            val v = delay(config, u, 6)
             if (v == UNSUPPORTED) return UNSUPPORTED
-            if (v > 0) ok.add(v) else failed++
-            if (ok.size >= need) break
-            if (failed > urls.size - need) break
+            if (v > 0) return v
         }
-        return when {
-            ok.size >= need -> ok.sorted()[ok.size / 2]
-            ok.isNotEmpty() -> PARTIAL
-            else -> -1
-        }
+        return -1
     }
 }

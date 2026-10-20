@@ -12,9 +12,6 @@ data class Tuning(
     val appMode: Int = 0,
     val apps: String = "",
     val unmetered: Boolean = false,
-    val reconnect: Boolean = true,
-    val retries: Int = 3,
-    val retryDelay: Int = 2,
     val connIdle: Int = 300,
     val bufferKb: Int = 0,
     val mux: Boolean = false,
@@ -35,9 +32,6 @@ data class Tuning(
         .put("am", appMode)
         .put("apps", apps)
         .put("unm", unmetered)
-        .put("rc", reconnect)
-        .put("rt", retries)
-        .put("rd", retryDelay)
         .put("idle", connIdle)
         .put("buf", bufferKb)
         .put("mux", mux)
@@ -65,9 +59,6 @@ data class Tuning(
                     appMode = o.optInt("am", d.appMode).coerceIn(0, appModes.size - 1),
                     apps = o.optString("apps", d.apps),
                     unmetered = o.optBoolean("unm", d.unmetered),
-                    reconnect = o.optBoolean("rc", d.reconnect),
-                    retries = o.optInt("rt", d.retries).coerceIn(1, 50),
-                    retryDelay = o.optInt("rd", d.retryDelay).coerceIn(1, 60),
                     connIdle = o.optInt("idle", d.connIdle).coerceIn(10, 7200),
                     bufferKb = o.optInt("buf", d.bufferKb).coerceIn(0, 4096),
                     mux = o.optBoolean("mux", d.mux),

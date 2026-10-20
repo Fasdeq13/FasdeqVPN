@@ -13,9 +13,9 @@ android {
         applicationId = (project.findProperty("app.id") as String?) ?: "app.fasdeq.vpn"
         minSdk = 26
         targetSdk = 35
-        versionCode = (project.findProperty("app.vcode") as String?)?.toInt() ?: 7
-        versionName = (project.findProperty("app.vname") as String?) ?: "1.7"
-        manifestPlaceholders["appLabel"] = (project.findProperty("app.label") as String?) ?: "FasdeqVPN"
+        versionCode = (project.findProperty("app.vcode") as String?)?.toInt() ?: 8
+        versionName = (project.findProperty("app.vname") as String?) ?: "1.8"
+        manifestPlaceholders["appLabel"] = (project.findProperty("app.label") as String?) ?: "Tunn"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -70,6 +70,12 @@ android {
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("androidx.core:core-ktx:1.15.0", "androidx.core:core:1.15.0", "org.jetbrains.kotlin:kotlin-stdlib:2.0.21", "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21", "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21", "org.jetbrains.kotlin:kotlin-reflect:2.0.21")
+    }
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
@@ -82,4 +88,5 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation(files("libs/libv2ray.aar"))
+    implementation("com.zaneschepke:amneziawg-android:2.3.7")
 }

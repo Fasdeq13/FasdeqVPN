@@ -200,7 +200,7 @@ object Links {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 10000
         c.readTimeout = 15000
-        c.setRequestProperty("User-Agent", "FasdeqVPN/1.0")
+        Identity.apply(c)
         try {
             require(c.responseCode in 200..299) { "HTTP ${c.responseCode}" }
             val body = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }

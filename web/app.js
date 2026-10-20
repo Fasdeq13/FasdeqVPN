@@ -80,10 +80,10 @@
     accent: { r: 64, g: 216, b: 208 },
     anim: { all: true, pages: true, controls: true, sheets: true, enabled: true, speed: 1, intensity: 1, tempo: 1, burst: true, waves: 3, idle: true, iconFx: true, press: true, haptics: true, glow: 1 },
     button: { size: 224, lobes: 10, shape: 0 },
-    textScale: 1, autoCheck: true, checkInterval: 60, updates: { auto: true },
+    textScale: 1, autoCheck: false, mask: 1, checkInterval: 60, updates: { auto: true },
     autoConnect: false, dns: 0, dnsCustom: "", mtu: 1500,
     pingMode: 0, pingTimeout: 1, autoPing: false, sortPing: true,
-    tuning: { ipv6: true, log: 2, sniff: false, lan: false, quic: false, ds: 0, am: 0, apps: "", unm: false, rc: true, rt: 3, rd: 2, idle: 300, buf: 0, mux: false, muxc: 8 },
+    tuning: { ipv6: true, log: 2, sniff: false, lan: false, quic: false, ds: 0, am: 0, apps: "", unm: false, idle: 300, buf: 0, mux: false, muxc: 8 },
   };
   const PRESETS = [
     ["Бирюза", 64, 216, 208], ["Синий", 92, 150, 255], ["Фиолетовый", 178, 140, 255], ["Розовый", 255, 125, 170],
@@ -569,16 +569,7 @@
   }
 
 
-  const eng = { family: null, msg: "" };
   const plg = { msg: "" };
-  function activePlugin() {
-    const key = S.plugins.engine;
-    return key ? S.plugins.list.find((p) => p.key === key) : null;
-  }
-  function engineLabel() {
-    const p = activePlugin();
-    return p ? p.name + " " + p.version : "Встроенный (Xray)";
-  }
   function plainRow(title, sub, ctl, onTap, selected) {
     return h(onTap ? "button" : "div", { class: "row" + (selected ? " selected" : ""), onclick: onTap }, h("div", { class: "grow" }, h("div", { class: "t" }, title), sub ? h("div", { class: "s" }, sub) : null), ctl);
   }
@@ -586,40 +577,6 @@
     const b = S.plugins.busy;
     return b ? h("div", { class: "busy-line" }, h("div", { class: "bar" }), h("div", { class: "body" }, b)) : null;
   }
-  function openEngine() {
-    eng.msg = "";
-    const act = activePlugin();
-    eng.family = eng.family || (act ? act.family : "");
-    openLive(() => {
-      const P = S.plugins;
-      const busy = !!P.busy;
-      const fams = [{ family: "", name: "Встроенный" }].concat(P.families);
-      const cur = eng.family;
-      const tabs = h("div", { class: "seg plain" }, fams.map((f) => h("button", { class: f.family === cur ? "on" : "", onclick: () => { eng.family = f.family; refreshLive(); } }, f.name)));
-      const out = h("div", {}, h("h2", {}, "Движок WireGuard"),
-        h("div", { class: "body" }, "Какой движок запускает WireGuard-конфигурации. Встроенный работает через Xray, остальные подключаются как плагины и дают выбор версии."),
-        h("div", { class: "seg-wrap" }, tabs), busyLine());
-      if (!cur) {
-        out.append(h("div", { class: "list" }, plainRow("Встроенный (Xray)", "Версия ядра: " + (S.cores.builtin || "—"), !P.engine ? icon("check") : null, () => Bridge.act("wgEngine", ""), !P.engine)));
-      } else {
-        const installed = P.list.filter((p) => p.family === cur);
-        out.append(h("div", { class: "group-title" }, h("span", {}, "Установленные версии")));
-        out.append(installed.length ? h("div", { class: "list" }, installed.map((p) => plainRow(p.name + " " + p.version, p.description || "", h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("pluginDelete", p.key); } }, icon("del")), () => Bridge.act(cur === "amneziawg" ? "awgEngine" : "wgEngine", p.key), (cur === "amneziawg" ? P.awgEngine : P.engine) === p.key))) : h("div", { class: "body" }, "Пока ничего не установлено"));
-        const catFam = P.catalog ? P.catalog.find((c) => c.family === cur) : null;
-        out.append(h("div", { class: "group-title" }, h("span", {}, "Доступные версии"), h("button", { class: "icon-btn sm", "aria-label": "Обновить список", onclick: async () => { const r = await Bridge.act("loadCatalog"); eng.msg = r && r.error ? r.error : ""; refreshLive(); } }, icon("refresh"))));
-        if (!P.catalog) out.append(h("button", { class: "btn tonal", disabled: busy, onclick: async () => { const r = await Bridge.act("loadCatalog"); eng.msg = r && r.error ? r.error : ""; refreshLive(); } }, icon("download"), "Загрузить список версий"));
-        else if (!catFam || !catFam.versions.length) out.append(h("div", { class: "body" }, "В каталоге пока нет версий этого движка"));
-        else out.append(h("div", { class: "list" }, catFam.versions.map((v, i) => {
-          const have = installed.some((p) => p.version === v.version);
-          return plainRow(v.version + (i === 0 ? " · последняя" : ""), (v.notes || "") + (v.size ? (v.notes ? " · " : "") + fmtMb(v.size) : ""),
-            h("button", { class: "btn tonal", disabled: busy, onclick: async (e) => { e.stopPropagation(); const r = await Bridge.act("installPluginUrl", { url: v.url, select: true }); eng.msg = r && r.error ? r.error : "Версия " + v.version + " установлена и выбрана"; refreshLive(); } }, icon(have ? "refresh" : "download"), have ? "Заново" : "Скачать"));
-        })));
-      }
-      if (eng.msg) out.append(h("div", { class: "msg" }, eng.msg));
-      return out;
-    });
-  }
-
   function pluginFieldRow(p, f) {
     const cur = p.values[f.key];
     const set = (v) => { p.values[f.key] = v; Bridge.act("pluginSet", { key: p.key, name: f.key, value: v }); };
@@ -646,7 +603,9 @@
     input.value = Number(cur) || 0;
     paint(Number(input.value));
     input.addEventListener("input", () => { const v = Number(input.value); paint(v); set(v); });
-    return h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, f.title || f.key), val), input);
+    const prow = h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, f.title || f.key), val), input);
+    guard(prow, input);
+    return prow;
   }
 
   function openPluginSettings(key) {
@@ -759,6 +718,12 @@
     });
   }
 
+  let noticeShown = false;
+  function openNotice() {
+    noticeShown = true;
+    openSheet(h("div", {}, h("h2", {}, "Старый интерфейс"), h("div", { class: "body" }, "С версии 2.0 старый интерфейс (Compose) будет удалён. Сейчас он уже не обновляется."),
+      h("div", { class: "actions" }, h("button", { class: "btn filled", onclick: () => { closeSheet(); Bridge.act("noticeSeen"); } }, "Понятно"))));
+  }
   let shownUpdate = "";
   function openUpdate() {
     const u = S.update;
@@ -845,6 +810,7 @@
     };
     const r = h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, title), val), input);
     input.addEventListener("input", () => { const v = Number(input.value); lastV = v; paint(v); setPath(path, v); });
+    guard(r, input);
     let lastV;
     refreshers.push(() => {
       if (show) { const hd = !show(); if (r.hidden !== hd) r.hidden = hd; }
@@ -869,52 +835,38 @@
     return [h("div", { class: "group-title" }, h("span", {}, title)), h("div", { class: "list" }, rows)];
   }
 
-  function awgLabel() {
-    const P = S.plugins;
-    const list = P.list.filter((p) => p.family === "amneziawg");
-    if (!list.length) return "Не установлен. Нажмите, чтобы скачать";
-    const p = list.find((x) => x.key === P.awgEngine) || list[list.length - 1];
-    return p.name + " " + p.version;
+  function hwidSheet() {
+    const code = h("div", { class: "rgb-preview" }, "…");
+    let cur = "";
+    Bridge.act("hwid").then((r) => { cur = (r && r.hwid) || ""; code.textContent = cur || "—"; });
+    const copy = h("button", { class: "btn tonal", onclick: () => { if (cur) { Bridge.act("copy", cur); snack("HWID скопирован"); } } }, "Копировать");
+    const reset = h("button", { class: "btn text", onclick: async () => { const r = await Bridge.act("hwidReset"); cur = (r && r.hwid) || ""; code.textContent = cur || "—"; snack("HWID сброшен"); } }, "Сбросить");
+    openSheet(h("div", {}, h("h2", {}, "HWID"), h("div", { class: "body" }, "Отправляется провайдеру при загрузке подписки. После сброса у подписки может понадобиться заново привязать устройство."), h("div", { style: "margin:16px 0" }, code), h("div", { class: "actions" }, reset, copy, h("button", { class: "btn filled", onclick: closeSheet }, "Готово"))));
   }
-  function openAmnezia() {
-    eng.family = "amneziawg";
-    openEngine();
-  }
-  function awgParamsSheet() {
-    const P = S.plugins;
-    const cur = P.awgParams || {};
-    const keys = P.awgKeys || [];
-    const inputs = {};
-    const grid = h("div", { class: "awg-grid" }, keys.map((k) => {
-      const inp = h("input", { class: "hex wide", value: cur[k] || "", placeholder: "из конфига", spellcheck: "false", autocapitalize: "off" });
-      inputs[k] = inp;
-      return h("label", { class: "awg-cell" }, h("span", {}, k.toUpperCase()), inp);
-    }));
-    const force = { v: !!cur._force };
-    const toggle = h("button", { class: "switch" + (force.v ? " on" : ""), "aria-label": "Применять к WireGuard", onclick: () => { force.v = !force.v; toggle.classList.toggle("on", force.v); } });
-    const save = h("button", { class: "btn filled", onclick: async () => {
-      const o = { _force: force.v };
-      keys.forEach((k) => { o[k] = inputs[k].value.trim(); });
-      closeSheet();
-      await Bridge.act("awgParams", o);
-      snack("Параметры AmneziaWG сохранены");
-    } }, "Сохранить");
-    const reset = h("button", { class: "btn text", onclick: async () => { closeSheet(); await Bridge.act("awgParams", { _force: false }); snack("Параметры сброшены"); } }, "Сбросить");
-    openSheet(h("div", {}, h("h2", {}, "Параметры AmneziaWG"),
-      h("div", { class: "body" }, "Пустое поле: значение берётся из конфигурации. Заполненное заменяет его при каждом подключении через движок AmneziaWG. Jc, Jmin, Jmax: пакеты-мусор и их размер. S1-S4: добавки к размеру пакетов. H1-H4: заголовки. I1-I5: цепочки имитации протокола."),
-      grid,
-      h("div", { class: "row" }, h("div", { class: "grow" }, h("div", { class: "t" }, "Применять и к обычному WireGuard"), h("div", { class: "s" }, "Если сервер ждёт обфускацию, а в конфигурации её нет")), toggle),
-      h("div", { class: "actions" }, reset, save)));
-  }
-  function awgModeRow() {
-    const names = ["Как в конфиге", "Всё через AmneziaWG", "Всё через WireGuard"];
-    const buttons = names.map((n, i) => h("button", { onclick: () => { S.plugins.wgMode = i; refreshers.forEach((f) => f()); Bridge.act("awgMode", i); } }, n));
-    const row_ = h("div", { class: "row block" },
-      h("div", { class: "head" }, h("div", { class: "t" }, "Какой протокол запускать")),
-      h("div", { class: "seg plain" }, buttons),
-      h("div", { class: "s" }, "Как в конфиге: AmneziaWG идёт через движок AmneziaWG, обычный WireGuard через выбранный движок. Всё через AmneziaWG: обычный WireGuard тоже запускается этим движком. Всё через WireGuard: параметры AmneziaWG отбрасываются."));
-    refreshers.push(() => { const m = S.plugins.wgMode || 0; buttons.forEach((b, j) => b.classList.toggle("on", j === m)); });
-    return row_;
+  function guard(box, input) {
+    let timer = 0, armed = false, sx = 0, sy = 0, id = -1;
+    const zone = (e) => { const r = input.getBoundingClientRect(); return e.clientX >= r.left - 12 && e.clientX <= r.right + 12 && e.clientY >= r.top - 18 && e.clientY <= r.bottom + 18; };
+    const move = (e) => {
+      const r = input.getBoundingClientRect();
+      const min = Number(input.min), max = Number(input.max), step = Number(input.step) || 1;
+      let v = min + clamp((e.clientX - r.left) / r.width, 0, 1) * (max - min);
+      v = Number(clamp(Math.round((v - min) / step) * step + min, min, max).toFixed(4));
+      if (Number(input.value) !== v) { input.value = v; input.dispatchEvent(new Event("input")); }
+    };
+    const end = () => { clearTimeout(timer); timer = 0; armed = false; box.classList.remove("armed"); };
+    input.style.pointerEvents = "none";
+    box.addEventListener("pointerdown", (e) => {
+      if (!zone(e)) return;
+      sx = e.clientX; sy = e.clientY; id = e.pointerId;
+      clearTimeout(timer);
+      timer = setTimeout(() => { armed = true; box.classList.add("armed"); try { box.setPointerCapture(id); } catch (x) {} Bridge.act("haptic", "strong"); }, 350);
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (armed) { e.preventDefault(); move(e); return; }
+      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) { clearTimeout(timer); timer = 0; }
+    });
+    box.addEventListener("pointerup", end);
+    box.addEventListener("pointercancel", end);
   }
 
   function colorEditor() {
@@ -936,6 +888,7 @@
       });
       input.style.setProperty("--c", tint);
       const box = h("div", { class: "rgb-slider" }, h("div", { class: "head", style: "display:flex;justify-content:space-between" }, h("div", { class: "t" }, label), val), input);
+      guard(box, input);
       return { box, input, paint };
     };
     const ch = [chan("r", "Красный", "#ff5c5c"), chan("g", "Зелёный", "#5cdc7a"), chan("b", "Синий", "#5c8cff")];
@@ -967,12 +920,10 @@
     const v = $("#view-settings");
     const put = (...x) => v.append(...x.flat(Infinity));
     const anim = () => S.settings.anim.all;
-    const engRow = action("Движок WireGuard", "—", openEngine);
-    refreshers.push(() => { const el = engRow.querySelector(".s"); const t = engineLabel(); if (el && el.textContent !== t) el.textContent = t; });
-    const awgRow = action("Движок AmneziaWG", "—", openAmnezia);
-    refreshers.push(() => { const el = awgRow.querySelector(".s"); const t = awgLabel(); if (el && el.textContent !== t) el.textContent = t; });
+
     put(
       h("div", { class: "top-row" }, h("h1", { class: "headline" }, "Настройки")),
+      h("div", { class: "body" }, "Чтобы изменить ползунок, зажмите его на долю секунды и ведите вбок. Прокрутка настройки не меняет."),
       group("Цвет и тема",
         seg("theme", ["Система", "Светлая", "Тёмная"], "Тема"),
         colorEditor(),
@@ -1019,22 +970,16 @@
       group("Приложения",
         seg("tuning.am", ["Все", "Исключить", "Только"], "Через VPN идут"),
         textBox("tuning.apps", "Пакеты через запятую", "org.telegram.messenger, com.discord", () => S.settings.tuning.am !== 0)),
-      group("Переподключение",
-        sw("tuning.rc", "Переподключаться при обрыве"),
-        slider("tuning.rt", "Попыток за 2 минуты", 1, 20, 1, (x) => String(x), () => S.settings.tuning.rc),
-        slider("tuning.rd", "Пауза между попытками", 1, 30, 1, (x) => x + " с", () => S.settings.tuning.rc)),
       group("Ядро",
         action("Ядро Xray", "Встроенное или своё, версия и загрузка", openCores)),
       group("Сервисы",
         sw("autoCheck", "Проверять сервисы автоматически", "Discord, Telegram и YouTube через каждый сервер, пока VPN включён"),
         slider("checkInterval", "Интервал проверки", 5, 240, 5, (x) => x + " мин", () => S.settings.autoCheck),
         action("Проверить сейчас", "Запустить проверку сервисов для всех серверов", () => { Bridge.act("checkServices"); snack("Проверяю сервисы…"); go("home"); })),
-      group("AmneziaWG",
-        awgModeRow(),
-        awgRow,
-        action("Параметры обфускации", "Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5", awgParamsSheet)),
-      group("Движок и плагины",
-        engRow,
+      group("Клиент для подписок",
+        seg("mask", ["Tunn", "Happ", "v2RayTun", "Incy"], "Под кого маскироваться"),
+        action("HWID", "Идентификатор устройства: показать, копировать, сбросить", hwidSheet)),
+      group("Плагины",
         action("Плагины", "Протоколы, правила обхода, дополнения интерфейса", openPlugins)),
       group("Проверка пинга",
         seg("pingMode", ["Авто", "TCP", "UDP", "Оба", "ICMP"], "Способ"),
@@ -1059,7 +1004,7 @@
     const dev = (name, role, url) => h("button", { class: "dev", onclick: () => Bridge.act("open", url) },
       h("div", { class: "avatar" }, Array.from(name)[0].toUpperCase()),
       h("div", { class: "grow" }, h("div", { class: "t" }, name), role ? h("div", { class: "s" }, role) : null));
-    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "FasdeqVPN"), h("div", { class: "body" }, "Версия 1.7 · веб-интерфейс"),
+    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 1.8 · создатель fasdeq13"),
       h("div", { class: "group-title tight" }, h("span", {}, "Участники")),
       h("div", { class: "devs" }, dev("Fasdeq13", "Создатель", "https://github.com/Fasdeq13/FasdeqVPN"), dev("fezix64", "", "https://github.com/fezix64"))));
   }
@@ -1099,6 +1044,7 @@
     fixCorners();
     refreshLive();
     loadPluginUi();
+    if (S.notice && !noticeShown && !$("#sheet").classList.contains("show")) openNotice();
     if (S.update.available && S.settings.updates.auto && S.update.tag !== shownUpdate && !$("#sheet").classList.contains("show")) openUpdate();
     if (first) requestAnimationFrame(() => { refreshers.forEach((f) => f()); fixCorners(); });
   }

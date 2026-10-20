@@ -174,43 +174,111 @@ object Wg {
         return out.joinToString("\n")
     }
 
-    fun applyParams(conf: String, params: JSONObject, force: Boolean): String {
-        if (!isConf(conf)) return conf
-        if (!force && !isAwg(conf)) return conf
-        val set = LinkedHashMap<String, String>()
-        for (k in awgKeys) {
-            val v = params.optString(k, "").trim()
-            if (v.isNotEmpty()) set[k] = v
-        }
-        if (set.isEmpty()) return conf
-        val seen = HashSet<String>()
-        val out = ArrayList<String>()
+    val extraKeys = listOf("mtu", "keepalive", "dns", "port")
+
+    private val canon = mapOf(
+        "privatekey" to "PrivateKey", "address" to "Address", "dns" to "DNS", "mtu" to "MTU", "listenport" to "ListenPort",
+        "jc" to "Jc", "jmin" to "Jmin", "jmax" to "Jmax", "s1" to "S1", "s2" to "S2", "s3" to "S3", "s4" to "S4",
+        "h1" to "H1", "h2" to "H2", "h3" to "H3", "h4" to "H4", "i1" to "I1", "i2" to "I2", "i3" to "I3", "i4" to "I4", "i5" to "I5",
+        "publickey" to "PublicKey", "presharedkey" to "PresharedKey", "allowedips" to "AllowedIPs",
+        "endpoint" to "Endpoint", "persistentkeepalive" to "PersistentKeepalive"
+    )
+    private val dropped = setOf("preup", "postup", "predown", "postdown", "table", "saveconfig")
+
+    class Doc(val iface: LinkedHashMap<String, String>, val peers: MutableList<LinkedHashMap<String, String>>)
+
+    fun parseDoc(conf: String): Doc {
+        val iface = LinkedHashMap<String, String>()
+        val peers = ArrayList<LinkedHashMap<String, String>>()
         var section = ""
-        fun flush() {
-            for ((k, v) in set) if (k !in seen) out.add("$k = $v")
-        }
-        for (line in conf.lines()) {
-            val t = line.trim()
+        for (raw in conf.replace("\r", "").lines()) {
+            val t = raw.trim()
+            if (t.isEmpty() || t.startsWith("#") || t.startsWith(";")) continue
             if (t.startsWith("[")) {
-                if (section == "[interface]") flush()
                 section = t.lowercase()
-                out.add(line)
+                if (section == "[peer]") peers.add(LinkedHashMap())
                 continue
             }
-            if (section == "[interface]") {
-                val i = t.indexOf('=')
-                if (i > 0) {
-                    val k = t.substring(0, i).trim().lowercase()
-                    if (k in set) {
-                        out.add("$k = ${set[k]}")
-                        seen.add(k)
-                        continue
-                    }
+            val i = t.indexOf('=')
+            if (i <= 0) continue
+            val k = t.substring(0, i).trim().lowercase()
+            val v = t.substring(i + 1).trim()
+            if (k in dropped) continue
+            if (section == "[interface]") iface[k] = v
+            else if (section == "[peer]" && peers.isNotEmpty()) peers.last()[k] = v
+        }
+        return Doc(iface, peers)
+    }
+
+    fun render(d: Doc): String {
+        val sb = StringBuilder("[Interface]\n")
+        for ((k, v) in d.iface) sb.append(canon[k] ?: k).append(" = ").append(v).append('\n')
+        for (p in d.peers) {
+            sb.append("\n[Peer]\n")
+            for ((k, v) in p) sb.append(canon[k] ?: k).append(" = ").append(v).append('\n')
+        }
+        return sb.toString().trim()
+    }
+
+    fun hostOf(ep: String): String {
+        val e = ep.trim()
+        if (e.startsWith("[")) {
+            val end = e.indexOf(']')
+            return if (end > 1) e.substring(1, end) else e
+        }
+        return e.substringBeforeLast(':')
+    }
+
+    fun portOf(ep: String): Int {
+        val e = ep.trim()
+        val tail = if (e.startsWith("[")) e.substringAfter("]").removePrefix(":") else e.substringAfterLast(':', "")
+        return tail.toIntOrNull() ?: 51820
+    }
+
+    private fun resolve(host: String): String {
+        val all = try {
+            java.net.InetAddress.getAllByName(host)
+        } catch (e: Exception) {
+            throw IllegalStateException("Не удалось найти адрес сервера $host")
+        }
+        val pick = all.firstOrNull { it is java.net.Inet4Address } ?: all.first()
+        return (pick.hostAddress ?: host).substringBefore('%')
+    }
+
+    fun quickResolved(conf: String): String {
+        val d = parseDoc(conf)
+        for (p in d.peers) {
+            val ep = p["endpoint"] ?: continue
+            val addr = resolve(hostOf(ep))
+            val port = portOf(ep)
+            p["endpoint"] = if (addr.contains(':')) "[$addr]:$port" else "$addr:$port"
+        }
+        return render(d)
+    }
+
+    fun applyParams(conf: String, params: JSONObject, force: Boolean): String {
+        if (!isConf(conf)) return conf
+        val d = parseDoc(conf)
+        if (force || isAwg(conf)) {
+            for (k in awgKeys) {
+                val v = params.optString(k, "").trim()
+                if (v.isNotEmpty()) d.iface[k] = v
+            }
+        }
+        params.optString("mtu", "").trim().toIntOrNull()?.let { if (it in 1200..1500) d.iface["mtu"] = it.toString() }
+        params.optString("dns", "").trim().takeIf { it.isNotEmpty() }?.let { d.iface["dns"] = it }
+        params.optString("keepalive", "").trim().toIntOrNull()?.let {
+            if (it in 0..600) for (p in d.peers) p["persistentkeepalive"] = it.toString()
+        }
+        params.optString("port", "").trim().toIntOrNull()?.let { port ->
+            if (port in 1..65535) {
+                for (p in d.peers) {
+                    val ep = p["endpoint"] ?: continue
+                    val host = hostOf(ep)
+                    p["endpoint"] = if (host.contains(':')) "[$host]:$port" else "$host:$port"
                 }
             }
-            out.add(line)
         }
-        if (section == "[interface]") flush()
-        return out.joinToString("\n")
+        return render(d)
     }
 }

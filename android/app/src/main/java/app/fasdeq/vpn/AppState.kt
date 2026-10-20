@@ -134,7 +134,7 @@ class AppState(private val app: Application) {
         private set
     var resetTick by mutableIntStateOf(0)
         private set
-    var autoCheck by mutableStateOf(prefs.getBoolean("auto_check", true))
+    var autoCheck by mutableStateOf(prefs.getBoolean("auto_check", false))
     var checkInterval by mutableFloatStateOf(prefs.getFloat("check_interval", 60f))
     var powerScale by mutableFloatStateOf(prefs.getFloat("power_scale", 1f))
     var textScale by mutableFloatStateOf(prefs.getFloat("text_scale", 1f))
@@ -320,7 +320,7 @@ class AppState(private val app: Application) {
             null
         }
         if (plugin != null) return null
-        if (Plugins.needsAwgEngine(app, server.conf)) return null
+        if (Plugins.usesAwg(app, server.conf)) return null
         return try {
             Services.probeConfig(Links.parse(Plugins.effectiveConf(app, server.conf)).outbound)
         } catch (e: Exception) {
@@ -332,8 +332,7 @@ class AppState(private val app: Application) {
         if (checkingServices || servers.isEmpty()) return
         checkingServices = true
         val list = servers.toList()
-        checks.clear()
-        list.forEach { checks[it.id] = ServiceCheck(busy = true) }
+        list.forEach { checks[it.id] = (checks[it.id] ?: ServiceCheck()).copy(busy = true) }
         val unsupported = AtomicBoolean(false)
         val counters = list.associate { it.id to AtomicInteger(Services.names.size) }
         scope.launch {
@@ -858,11 +857,8 @@ class AppState(private val app: Application) {
         } catch (e: Throwable) {
             null
         }
-        if (plugin == null && Plugins.needsAwgEngine(app, target.conf)) {
-            error = "Для AmneziaWG нужен движок: Настройки, AmneziaWG, Движок"
-            return
-        }
-        val outbound = if (plugin != null) "{}" else try {
+        val awg = plugin == null && Plugins.usesAwg(app, target.conf)
+        val outbound = if (plugin != null || awg) "{}" else try {
             Links.parse(Plugins.effectiveConf(app, target.conf)).outbound.toString()
         } catch (e: Exception) {
             error = e.message ?: "Неверная конфигурация"
@@ -882,6 +878,15 @@ class AppState(private val app: Application) {
             .putExtra(FasdeqVpnService.EXTRA_NAME, target.name)
             .putExtra(FasdeqVpnService.EXTRA_ID, target.id)
             .putExtra(FasdeqVpnService.EXTRA_RULES, Plugins.rules(app).toString())
+        if (awg) {
+            val conf = try {
+                Plugins.awgConf(app, Plugins.effectiveConf(app, target.conf))
+            } catch (e: Exception) {
+                error = e.message ?: "Неверная конфигурация"
+                return
+            }
+            intent.putExtra(FasdeqVpnService.EXTRA_AWG_CONF, conf)
+        }
         if (plugin != null) {
             intent.putExtra(FasdeqVpnService.EXTRA_PLUGIN_LIB, plugin.lib?.absolutePath ?: "")
             intent.putExtra(FasdeqVpnService.EXTRA_PLUGIN_CONF, Plugins.pluginConfig(app, plugin, target.conf))

@@ -2,3 +2,5 @@
 -keep class go.** { *; }
 -dontwarn go.**
 -keepclassmembers class * extends android.net.VpnService { *; }
+-keep class org.amnezia.awg.** { *; }
+-dontwarn org.amnezia.awg.**

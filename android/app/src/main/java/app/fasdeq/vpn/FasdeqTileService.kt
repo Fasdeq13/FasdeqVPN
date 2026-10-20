@@ -45,7 +45,7 @@ class FasdeqTileService : TileService() {
             Status.Off -> Tile.STATE_INACTIVE
             else -> Tile.STATE_UNAVAILABLE
         }
-        tile.label = "FasdeqVPN"
+        tile.label = "Tunn"
         tile.icon = Icon.createWithResource(this, R.drawable.ic_power)
         if (Build.VERSION.SDK_INT >= 29) {
             tile.subtitle = when (st.status) {

@@ -233,7 +233,7 @@ private fun requestTile(context: Context) {
         val manager = context.getSystemService(StatusBarManager::class.java)
         manager.requestAddTileService(
             ComponentName(context, FasdeqTileService::class.java),
-            "FasdeqVPN",
+            "Tunn",
             GraphicIcon.createWithResource(context, R.drawable.ic_power),
             context.mainExecutor
         ) { }
@@ -439,7 +439,7 @@ private fun AboutCard() {
             ) {
                 CookieLogo()
                 Text(
-                    "FasdeqVPN",
+                    "Tunn",
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.Bold,
                         brush = Brush.linearGradient(
@@ -885,29 +885,6 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                 }
             }
 
-            SettingsGroup("Авто-переподключение") {
-                val tn = state.tuning
-                SettingItem(
-                    icon = R.drawable.ic_refresh,
-                    title = "Переподключаться при обрыве",
-                    subtitle = "Если выключено, VPN остановится при первой же ошибке",
-                    onClick = { state.changeTuning(tn.copy(reconnect = !tn.reconnect)) }
-                ) { StateSwitch(tn.reconnect) { state.changeTuning(tn.copy(reconnect = it)) } }
-                if (tn.reconnect) {
-                    Column(
-                        Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        LabeledSlider("Попыток за 2 минуты", tn.retries.toString(), tn.retries.toFloat(), 1f..20f) {
-                            state.changeTuning(tn.copy(retries = it.toInt()))
-                        }
-                        LabeledSlider("Пауза между попытками", tn.retryDelay.toString() + " с", tn.retryDelay.toFloat(), 1f..30f) {
-                            state.changeTuning(tn.copy(retryDelay = it.toInt()))
-                        }
-                    }
-                }
-            }
-
             SettingsGroup("Приложения") {
                 val tn = state.tuning
                 Column(
@@ -1019,7 +996,7 @@ fun SettingsSheet(state: AppState, onDismiss: () -> Unit) {
                     subtitle = if (Build.VERSION.SDK_INT >= 33) {
                         "Быстрое включение и выключение из верхней шторки"
                     } else {
-                        "Опустите шторку, нажмите карандаш и перетащите плитку FasdeqVPN"
+                        "Опустите шторку, нажмите карандаш и перетащите плитку Tunn"
                     }
                 ) {
                     if (Build.VERSION.SDK_INT >= 33) {

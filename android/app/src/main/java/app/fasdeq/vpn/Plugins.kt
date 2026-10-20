@@ -174,6 +174,10 @@ object Plugins {
             val v = value.optString(k, "").trim()
             if (v.isNotEmpty()) clean.put(k, v)
         }
+        for (k in Wg.extraKeys) {
+            val v = value.optString(k, "").trim()
+            if (v.isNotEmpty()) clean.put(k, v)
+        }
         clean.put("_force", value.optBoolean("_force", false))
         stamp++
         prefs(context).edit().putString(AWG_PARAMS, clean.toString()).apply()
@@ -195,8 +199,6 @@ object Plugins {
     fun effectiveConf(context: Context, conf: String): String =
         if (wgMode(context) == 2 && Wg.isAwg(conf)) Wg.stripAwg(conf) else conf
 
-    fun needsAwgEngine(context: Context, conf: String): Boolean =
-        Wg.isAwg(conf) && wgMode(context) != 2 && forConf(context, conf) == null
 
     private fun pick(all: List<PluginInfo>, wanted: String, preferred: String): PluginInfo? {
         val mine = all.filter { family(it) == wanted }
@@ -303,32 +305,20 @@ object Plugins {
     }
 
     fun forConf(context: Context, conf: String): PluginInfo? {
+        if (Wg.isConf(conf)) return null
         val all = list(context).filter { enabled(context, it.key) && it.protocol != null && it.lib != null }
-        if (Wg.isConf(conf)) {
-            val awg = Wg.isAwg(conf)
-            val mode = wgMode(context)
-            val target = when {
-                mode == 1 -> "amneziawg"
-                mode == 2 -> "wireguard-go"
-                awg -> "amneziawg"
-                else -> ""
-            }
-            if (target.isNotEmpty()) {
-                val preferred = if (target == "amneziawg") awgEngine(context) else wgEngine(context)
-                val p = pick(all, target, preferred)
-                if (p != null) return p
-                if (awg && mode != 2) return null
-            }
-            if (!awg || mode == 2) {
-                val chosen = wgEngine(context)
-                if (chosen.isNotEmpty()) {
-                    val p = all.firstOrNull { it.key == chosen }
-                    if (p != null && p.protocol?.optBoolean("handlesWireGuard", false) == true && family(p) != "amneziawg") return p
-                }
-            }
-            return null
-        }
         return all.firstOrNull { matches(it, conf) }
+    }
+
+    fun usesAwg(context: Context, conf: String): Boolean {
+        if (!Wg.isConf(conf)) return false
+        val mode = wgMode(context)
+        return mode == 1 || (mode == 0 && Wg.isAwg(conf))
+    }
+
+    fun awgConf(context: Context, conf: String): String {
+        val params = awgParams(context)
+        return Wg.applyParams(conf, params, params.optBoolean("_force", false) || wgMode(context) == 1)
     }
 
     fun wholeConfig(context: Context, text: String): Boolean {

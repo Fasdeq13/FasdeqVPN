@@ -264,6 +264,16 @@ class WebBridge(private val host: WebUiActivity) {
                 push()
             }
             "clipboard" -> reply(id, JSONObject().put("text", clipboard()))
+            "hwid" -> reply(id, JSONObject().put("hwid", Identity.hwid()))
+            "hwidReset" -> reply(id, JSONObject().put("hwid", Identity.resetHwid()))
+            "copy" -> {
+                host.getSystemService(ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("Tunn", text))
+                reply(id)
+            }
+            "noticeSeen" -> {
+                prefs.edit().putBoolean("notice18", true).apply()
+                reply(id)
+            }
             "haptic" -> {
                 host.window.decorView.performHapticFeedback(
                     if (text == "strong") HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.VIRTUAL_KEY
@@ -316,6 +326,7 @@ class WebBridge(private val host: WebUiActivity) {
             "autoPing" -> st.changeAutoPing(bool(v))
             "sortPing" -> st.changeSortPing(bool(v))
             "autoCheck" -> st.changeAutoCheck(bool(v))
+            "mask" -> Identity.setMask(int(v))
             "checkInterval" -> st.changeCheckInterval(((v as? Number)?.toFloat()) ?: 60f)
             else -> {
                 if (path.startsWith("tuning.")) {
@@ -442,9 +453,11 @@ class WebBridge(private val host: WebUiActivity) {
         settings.put("sortPing", st.sortPing)
         settings.put("tuning", JSONObject(st.tuning.toJson()))
         settings.put("autoCheck", st.autoCheck)
+        settings.put("mask", Identity.mask())
         settings.put("checkInterval", st.checkInterval.toDouble())
         o.put("settings", settings)
         o.put("plugins", Plugins.snapshot(host))
+        o.put("notice", !prefs.getBoolean("notice18", false))
 
         val checks = JSONObject()
         for (s in st.servers) {

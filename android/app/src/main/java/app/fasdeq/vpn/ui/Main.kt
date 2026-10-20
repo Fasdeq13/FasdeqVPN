@@ -351,7 +351,7 @@ private fun Home(state: AppState, onPower: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "FasdeqVPN",
+                    "Tunn",
                     style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.weight(1f)
                 )

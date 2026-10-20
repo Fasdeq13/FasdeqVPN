@@ -64,7 +64,7 @@ object Updates {
                 c.connectTimeout = 10_000
                 c.readTimeout = 15_000
                 c.setRequestProperty("Accept", "application/vnd.github+json")
-                c.setRequestProperty("User-Agent", "FasdeqVPN")
+                c.setRequestProperty("User-Agent", "Tunn")
                 try {
                     when (c.responseCode) {
                         404 -> Pair<JSONObject?, String?>(null, null)

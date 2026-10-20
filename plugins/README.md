@@ -74,25 +74,6 @@ FasdeqPlugin.define("my-plugin", function (api) {
 
 `config` приходит как `{"conf":"<текст сервера>","settings":{...значения настроек плагина...}}`. Приложение само создаёт TUN по ответу `fq_prepare`, передаёт файловый дескриптор в `fq_start` и исключает себя из VPN, поэтому сокетам плагина `protect()` не нужен. Минимальный пример: `sdk/example/echo.c`.
 
-## Движки WireGuard и AmneziaWG
-
-Исходник обёртки над wireguard-go и amneziawg-go лежит в `go/`. Сборка (нужны Go и Android NDK):
-
-```
-ANDROID_NDK_HOME=/путь/к/ndk plugins/go/build.sh amneziawg 1.0.20250601
-ANDROID_NDK_HOME=/путь/к/ndk plugins/go/build.sh wireguard-go 0.0.20250522
-```
-
-На выходе `dist/fq-<движок>-<версия>-arm64.zip`. Выложите архивы в релизы репозитория и добавьте записи в `catalog.json`:
-
-```json
-{ "engines": [ { "family": "amneziawg", "name": "AmneziaWG", "versions": [
-  { "version": "1.0.20250601", "url": "https://github.com/Fasdeq13/FasdeqVPN/releases/download/.../fq-amneziawg-1.0.20250601-arm64.zip", "size": 6200000, "notes": "" }
-] } ] }
-```
-
-Приложение читает каталог из `raw.githubusercontent.com/Fasdeq13/FasdeqVPN/main/plugins/catalog.json`: в окне «Движок WireGuard» показаны установленные версии и доступные для скачивания, первая в списке считается последней.
-
 ## Примеры
 
 - `samples/ru-bypass.zip` — правила: российские домены напрямую, свои приложения и домены в настройках.
