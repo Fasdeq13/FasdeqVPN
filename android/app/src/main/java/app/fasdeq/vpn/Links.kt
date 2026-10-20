@@ -14,6 +14,45 @@ class Fetched(val body: String, val group: String)
 
 object Links {
 
+    private val stableParams = setOf("type", "security", "sni", "host", "path", "servicename", "pbk", "encryption", "mode", "headertype")
+
+    fun identity(link: String): String {
+        val t = link.trim()
+        if (t.contains("[Interface]", ignoreCase = true)) {
+            val d = Wg.parseDoc(t)
+            val peer = d.peers.firstOrNull()
+            val pub = peer?.get("publickey") ?: ""
+            val ep = peer?.get("endpoint") ?: ""
+            if (pub.isNotEmpty() && ep.isNotEmpty()) return "wg://" + (d.iface["privatekey"] ?: "") + "@" + pub + "@" + ep
+            return t.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith(";") }.joinToString("\n")
+        }
+        val scheme = t.substringBefore("://", "").lowercase()
+        if (scheme.isEmpty()) return t
+        val rest = t.substring(scheme.length + 3).substringBefore('#')
+        if (scheme == "vmess") {
+            val json = try {
+                JSONObject(String(b64(rest), Charsets.UTF_8))
+            } catch (e: Exception) {
+                null
+            }
+            if (json != null) {
+                return "vmess://" + listOf("add", "port", "id", "net", "host", "path", "sni", "tls").joinToString("|") { json.optString(it, "") }
+            }
+        }
+        val q = rest.indexOf('?')
+        val main = (if (q < 0) rest else rest.substring(0, q)).trimEnd('/')
+        val query = if (q < 0) "" else rest.substring(q + 1)
+        val params = query.split('&')
+            .mapNotNull { p ->
+                val i = p.indexOf('=')
+                if (i <= 0) null else p.substring(0, i).lowercase() to p.substring(i + 1).lowercase()
+            }
+            .filter { it.first in stableParams }
+            .sortedBy { it.first }
+            .joinToString("&") { it.first + "=" + it.second }
+        return "$scheme://$main?$params"
+    }
+
     fun extract(text: String): List<String> {
         val t = text.trim().removePrefix("﻿")
         if (t.contains("[Interface]", ignoreCase = true)) return listOf(t)

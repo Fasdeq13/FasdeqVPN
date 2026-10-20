@@ -575,20 +575,35 @@ class AppState(private val app: Application) {
         var added = 0
         var failure: String? = null
         val fresh = ArrayList<Server>()
+        val known = HashMap<String, Int>()
+        val byName = HashMap<String, Int>()
+        servers.forEachIndexed { i, s ->
+            known.putIfAbsent(Links.identity(s.conf), i)
+            byName.putIfAbsent(s.group + "|" + s.name + "|" + s.endpoint, i)
+        }
         for (item in items) {
             try {
                 val parsed = Plugins.describe(app, item.link) ?: Links.parse(item.link)
-                val existing = servers.indexOfFirst { it.conf == item.link }
+                val key = Links.identity(item.link)
+                var existing = known[key] ?: -1
+                if (existing < 0 && item.group.isNotBlank() && parsed.name.isNotBlank()) {
+                    existing = byName[item.group.trim() + "|" + parsed.name + "|" + parsed.endpoint] ?: -1
+                }
                 if (existing < 0) {
                     val hint = if (items.size == 1) nameHint else ""
                     val title = hint.ifBlank { parsed.name }.ifBlank { "Сервер ${servers.size + 1}" }
                     val id = "fq" + Integer.toHexString(Random.nextInt(0x100000, 0xFFFFFF))
                     val server = Server(id, title, item.link, parsed.endpoint, item.group.trim())
                     servers.add(server)
+                    known[key] = servers.size - 1
+                    byName.putIfAbsent(server.group + "|" + server.name + "|" + server.endpoint, servers.size - 1)
                     fresh.add(server)
                     if (selectedId == null) selectedId = id
-                } else if (item.group.isNotBlank() && servers[existing].group != item.group.trim()) {
-                    servers[existing] = servers[existing].copy(group = item.group.trim())
+                } else {
+                    var current = servers[existing]
+                    if (current.conf != item.link) current = current.copy(conf = item.link, endpoint = parsed.endpoint)
+                    if (item.group.isNotBlank() && current.group != item.group.trim()) current = current.copy(group = item.group.trim())
+                    if (current != servers[existing]) servers[existing] = current
                 }
                 if (item.group.isNotBlank()) ensureGroup(item.group.trim(), item.url)
                 added++
@@ -604,7 +619,31 @@ class AppState(private val app: Application) {
     suspend fun refreshGroup(name: String): String? {
         val group = groups.firstOrNull { it.name == name } ?: return "Группа не найдена"
         if (group.url.isBlank()) return "У группы нет ссылки для обновления"
-        return importText(group.url, forceGroup = group.name, forceUrl = group.url)
+        val result = importText(group.url, forceGroup = group.name, forceUrl = group.url)
+        if (result == null) dedupeGroup(group.name)
+        return result
+    }
+
+    private fun dedupeGroup(name: String) {
+        val byKey = HashMap<String, String>()
+        val byTitle = HashMap<String, String>()
+        val drop = HashSet<String>()
+        for (s in servers.filter { it.group == name }) {
+            val key = Links.identity(s.conf)
+            val title = s.name + "|" + s.endpoint
+            val first = byKey[key] ?: byTitle[title]
+            if (first == null) {
+                byKey[key] = s.id
+                byTitle[title] = s.id
+            } else if (s.id == selectedId || s.id == activeId) {
+                drop.add(first)
+                byKey[key] = s.id
+                byTitle[title] = s.id
+            } else {
+                drop.add(s.id)
+            }
+        }
+        if (drop.isNotEmpty()) removeMany(drop)
     }
 
     fun remove(server: Server) {
