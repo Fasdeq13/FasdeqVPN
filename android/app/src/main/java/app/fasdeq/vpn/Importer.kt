@@ -50,6 +50,8 @@ object Importer {
     fun prepare(text: String): Prepared {
         val wg = prepareWg(text)
         if (wg != null) return wg
+        val xr = XrayJson.prepare(text)
+        if (xr != null) return xr
         val hook = try {
             Plugins.prepare(FasdeqApp.appContext, text)
         } catch (e: Throwable) {

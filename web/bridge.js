@@ -154,6 +154,9 @@
           push();
           break;
         }
+        case "setCollapsed":
+          S.collapsed = payload;
+          return Promise.resolve({});
         case "refreshInfo":
           return Promise.resolve({});
         case "removeGroup":

@@ -254,6 +254,11 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id)
                 push()
             }
+            "setCollapsed" -> {
+                val arr = if (value is JSONArray) value else JSONArray()
+                FasdeqApp.appContext.getSharedPreferences("fasdeq", Context.MODE_PRIVATE).edit().putString("collapsed", arr.toString()).commit()
+                reply(id)
+            }
             "clearGroup" -> {
                 app.clearGroup(text)
                 reply(id)
@@ -438,6 +443,7 @@ class WebBridge(private val host: WebUiActivity) {
         val groups = JSONArray()
         for (g in st.groups) groups.put(JSONObject().put("name", g.name).put("url", g.url).put("used", g.used).put("total", g.total).put("expire", g.expire))
         o.put("groups", groups)
+        o.put("collapsed", try { JSONArray(FasdeqApp.appContext.getSharedPreferences("fasdeq", Context.MODE_PRIVATE).getString("collapsed", "[]")) } catch (e: Exception) { JSONArray() })
         val pings = JSONObject()
         for (s in st.servers) {
             val p = st.pings[s.id]

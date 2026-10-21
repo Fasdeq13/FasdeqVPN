@@ -281,9 +281,6 @@ object Links {
                 val tail = snippet(err)
                 throw IllegalStateException("HTTP $code" + if (tail.isNotEmpty()) ": $tail" else "")
             }
-            if (c.getHeaderField("x-hwid-not-supported") != null || c.getHeaderField("x-hwid-max-devices-reached") != null) {
-                throw IllegalStateException("Сервер не принял устройство (HWID)")
-            }
             val body = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
             val decoded = decodeSubscription(body)
             val looksOk = decoded.contains("://") || decoded.trimStart().startsWith("{") || decoded.trimStart().startsWith("[") || decoded.contains("[Interface]", true)

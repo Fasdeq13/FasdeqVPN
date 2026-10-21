@@ -480,14 +480,17 @@
   }
   const drag = { on: false, suppress: false };
   function collapsedList() {
+    if (Array.isArray(S.collapsed)) return S.collapsed;
     try { return JSON.parse(localStorage.getItem("tunn.collapsed") || "[]"); } catch (e) { return []; }
   }
   function isCollapsed(g) { return collapsedList().indexOf(g) >= 0; }
   function toggleCollapsed(g) {
-    const l = collapsedList();
+    const l = collapsedList().slice();
     const i = l.indexOf(g);
     if (i >= 0) l.splice(i, 1); else l.push(g);
+    S.collapsed = l;
     try { localStorage.setItem("tunn.collapsed", JSON.stringify(l)); } catch (e) {}
+    Bridge.act("setCollapsed", l);
     srv.sig = "";
     renderServers();
     fixCorners();
