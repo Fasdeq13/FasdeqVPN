@@ -625,58 +625,121 @@
     openSheet(h("div", {}, h("h2", {}, title), h("div", { style: "margin:16px 0" }, input), h("div", { class: "actions" }, h("button", { class: "btn text", onclick: closeSheet }, "Отмена"), ok)));
     setTimeout(() => input.focus(), 350);
   }
+  function fixList(l) {
+    const kids = Array.from(l.children);
+    kids.forEach((x) => x.classList.remove("first", "last"));
+    const vis = kids.filter((x) => !x.hidden);
+    if (vis.length) { vis[0].classList.add("first"); vis[vis.length - 1].classList.add("last"); }
+  }
+  srv.rows = new Map();
+  srv.top = null;
+  srv.body = null;
+  srv.topSig = "";
+  function makeRow(s) {
+    const id = s.id;
+    const cur = () => S.servers.find((x) => x.id === id) || s;
+    const avatar = h("div", { class: "avatar" });
+    const t = h("div", { class: "t" });
+    const sub = h("div", { class: "s" });
+    const side = h("div", { class: "side" });
+    const row = h("button", { class: "row", "data-sid": id, onclick: () => { if (drag.suppress) return; Bridge.act("select", id); } },
+      avatar,
+      h("div", { class: "grow" }, t, sub),
+      side,
+      h("span", { class: "icon-btn", role: "button", "aria-label": "Переименовать", onclick: (e) => { e.stopPropagation(); renameSheet("Название сервера", cur().name, (x) => Bridge.act("renameServer", { id, name: x })); } }, icon("edit")),
+      h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("remove", id); snack("Сервер удалён"); } }, icon("del")));
+    attachDrag(row, s);
+    return { el: row, avatar, t, sub, side, sig: "", sel: false };
+  }
+  function paintRow(r, s) {
+    const p = pingOf(s.id);
+    const sel = s.id === S.selected;
+    const sig = s.name + "|" + s.proto + "|" + s.endpoint + "|" + sel + "|" + (p.busy ? "b" : p.ms) + "|" + JSON.stringify(checkOf(s.id));
+    if (sig === r.sig) return;
+    r.sig = sig;
+    r.el.className = "row" + (sel ? " selected" : "");
+    r.avatar.textContent = Array.from(s.name)[0].toUpperCase();
+    r.t.textContent = s.name;
+    r.sub.textContent = s.proto + " · " + s.endpoint;
+    r.side.replaceChildren(pingChip(s.id), dotsFor(s.id));
+    if (r.el.parentElement) {
+      const kids = r.el.parentElement.children;
+      if (kids.length && (kids[0] === r.el || kids[kids.length - 1] === r.el)) fixList(r.el.parentElement);
+    }
+  }
   function renderServers() {
-    const sig = JSON.stringify([S.servers, S.groups, S.selected, S.pings, S.settings.sortPing, S.services, pingBusy(), collapsedList()]);
     if (drag.on) { srv.dirty = true; return; }
-    if (sig === srv.sig) return;
-    srv.sig = sig;
     const v = $("#view-servers");
-    const keep = v.scrollTop;
-    v.replaceChildren();
+    if (!srv.top) {
+      srv.top = h("div", {});
+      srv.body = h("div", {});
+      v.replaceChildren(srv.top, srv.body);
+    }
     const busy = pingBusy();
-    const pingBtn = h("button", { class: "btn tonal" + (busy ? " busy" : ""), onclick: async () => {
-      if (pingBusy()) return;
-      srv.local = true; srv.sig = ""; renderServers();
-      await Bridge.act("ping");
-      srv.local = false; srv.sig = ""; renderServers();
-    } }, icon(busy ? "refresh" : "bolt"), busy ? "Проверяю…" : "Проверить пинг");
     const chk = !!S.services.checking;
-    const svcBtn = h("button", { class: "btn tonal" + (chk ? " busy" : ""), onclick: () => { if (!S.services.checking && S.servers.length) Bridge.act("checkServices"); } }, icon(chk ? "refresh" : "check"), chk ? "Проверяю…" : "Сервисы");
-    v.append(h("div", { class: "top-row two" }, h("h1", { class: "headline" }, "Серверы"), h("div", { class: "tools" }, svcBtn, pingBtn)));
-    if (!S.servers.length) {
-      v.append(h("div", { class: "empty" }, h("div", { class: "title-large" }, "Серверов пока нет"), h("div", { class: "body" }, "Вставьте ссылку vless://, trojan://, ss:// или адрес подписки")));
+    const topSig = busy + "|" + chk + "|" + (S.servers.length ? 1 : 0);
+    if (topSig !== srv.topSig) {
+      srv.topSig = topSig;
+      const pingBtn = h("button", { class: "btn tonal" + (busy ? " busy" : ""), onclick: async () => {
+        if (pingBusy()) return;
+        srv.local = true; srv.topSig = ""; renderServers();
+        await Bridge.act("ping");
+        srv.local = false; srv.topSig = ""; renderServers();
+      } }, icon(busy ? "refresh" : "bolt"), busy ? "Проверяю…" : "Проверить пинг");
+      const svcBtn = h("button", { class: "btn tonal" + (chk ? " busy" : ""), onclick: () => { if (!S.services.checking && S.servers.length) Bridge.act("checkServices"); } }, icon(chk ? "refresh" : "check"), chk ? "Проверяю…" : "Сервисы");
+      const parts = [h("div", { class: "top-row two" }, h("h1", { class: "headline" }, "Серверы"), h("div", { class: "tools" }, svcBtn, pingBtn))];
+      if (!S.servers.length) {
+        parts.push(h("div", { class: "empty" }, h("div", { class: "title-large" }, "Серверов пока нет"), h("div", { class: "body" }, "Вставьте ссылку vless://, trojan://, ss:// или адрес подписки")));
+      }
+      srv.top.replaceChildren(...parts);
     }
     const groups = {};
     S.servers.forEach((s) => { (groups[s.group || ""] = groups[s.group || ""] || []).push(s); });
-    Object.keys(groups).forEach((g) => {
-      const list = groups[g].slice();
-      if (S.settings.sortPing) list.sort((x, y) => sortKey(x.id) - sortKey(y.id));
-      const folded = isCollapsed(g);
-      const actions = h("div", { class: "group-actions" },
-        h("button", { class: "icon-btn sm", "aria-label": "Проверить пинг группы", onclick: () => { Bridge.act("pingGroup", g); } }, icon("bolt")),
-        g ? h("button", { class: "icon-btn sm", "aria-label": "Переименовать группу", onclick: () => renameSheet("Название группы", g, async (t) => { const r = await Bridge.act("renameGroup", { old: g, name: t }); if (r && r.error) snack(r.error); }) }, icon("edit")) : null,
-        g && groupUrl(g) ? h("button", { class: "icon-btn sm", "aria-label": "Обновить подписку", onclick: async () => { const r = await Bridge.act("refreshGroup", g); snack(r && r.error ? r.error : "Подписка обновлена"); } }, icon("refresh")) : null,
-        g ? h("button", { class: "icon-btn sm", "aria-label": "Удалить группу", onclick: () => { Bridge.act("removeGroup", g); snack("Группа удалена"); } }, icon("del")) : null);
-      const fold = h("button", { class: "fold" + (folded ? " closed" : ""), "aria-label": folded ? "Развернуть группу" : "Свернуть группу", onclick: () => { toggleCollapsed(g); } },
-        icon("chevron"), h("span", {}, g || "Мои серверы"), folded ? h("em", {}, String(list.length)) : null);
-      const title = h("div", { class: "group-title", "data-gid": g }, fold, actions);
-      v.append(title);
-      const info = groupInfo(g);
-      if (info) v.append(info);
-      if (folded) return;
-      const box = h("div", { class: "list", "data-gid": g }, list.map((s) => {
-        const row = h("button", { class: "row" + (s.id === S.selected ? " selected" : ""), "data-sid": s.id, onclick: () => { if (drag.suppress) return; Bridge.act("select", s.id); } },
-          h("div", { class: "avatar" }, Array.from(s.name)[0].toUpperCase()),
-          h("div", { class: "grow" }, h("div", { class: "t" }, s.name), h("div", { class: "s" }, s.proto + " · " + s.endpoint)),
-          h("div", { class: "side" }, pingChip(s.id), dotsFor(s.id)),
-          h("span", { class: "icon-btn", role: "button", "aria-label": "Переименовать", onclick: (e) => { e.stopPropagation(); renameSheet("Название сервера", s.name, (t) => Bridge.act("renameServer", { id: s.id, name: t })); } }, icon("edit")),
-          h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("remove", s.id); snack("Сервер удалён"); } }, icon("del")));
-        attachDrag(row, s);
-        return row;
-      }));
-      v.append(box);
+    const names = Object.keys(groups);
+    if (!busy || !srv.rank) { srv.rank = {}; S.servers.forEach((s) => { srv.rank[s.id] = sortKey(s.id); }); }
+    names.forEach((g) => { if (S.settings.sortPing) groups[g].sort((x, y) => (srv.rank[x.id] == null ? 1e9 : srv.rank[x.id]) - (srv.rank[y.id] == null ? 1e9 : srv.rank[y.id])); });
+    const collapsed = collapsedList();
+    const key = JSON.stringify([names.map((g) => [g, groups[g].map((x) => x.id)]), S.groups, collapsed]);
+    if (key !== srv.sig) {
+      srv.sig = key;
+      const keep = v.scrollTop;
+      const live = new Set(S.servers.map((x) => x.id));
+      srv.rows.forEach((_, id) => { if (!live.has(id)) srv.rows.delete(id); });
+      const frag = document.createDocumentFragment();
+      const boxes = [];
+      names.forEach((g) => {
+        const list = groups[g];
+        const folded = collapsed.indexOf(g) >= 0;
+        const actions = h("div", { class: "group-actions" },
+          h("button", { class: "icon-btn sm", "aria-label": "Проверить пинг группы", onclick: () => { Bridge.act("pingGroup", g); } }, icon("bolt")),
+          g ? h("button", { class: "icon-btn sm", "aria-label": "Переименовать группу", onclick: () => renameSheet("Название группы", g, async (t) => { const r = await Bridge.act("renameGroup", { old: g, name: t }); if (r && r.error) snack(r.error); }) }, icon("edit")) : null,
+          g && groupUrl(g) ? h("button", { class: "icon-btn sm", "aria-label": "Обновить подписку", onclick: async () => { const r = await Bridge.act("refreshGroup", g); snack(r && r.error ? r.error : "Подписка обновлена"); } }, icon("refresh")) : null,
+          g ? h("button", { class: "icon-btn sm", "aria-label": "Удалить группу", onclick: () => { Bridge.act("removeGroup", g); snack("Группа удалена"); } }, icon("del")) : null);
+        const fold = h("button", { class: "fold" + (folded ? " closed" : ""), "aria-label": folded ? "Развернуть группу" : "Свернуть группу", onclick: () => { toggleCollapsed(g); } },
+          icon("chevron"), h("span", {}, g || "Мои серверы"), folded ? h("em", {}, String(list.length)) : null);
+        frag.append(h("div", { class: "group-title", "data-gid": g }, fold, actions));
+        const info = groupInfo(g);
+        if (info) frag.append(info);
+        if (folded) return;
+        const box = h("div", { class: "list", "data-gid": g });
+        const rowsFrag = document.createDocumentFragment();
+        list.forEach((s) => {
+          let r = srv.rows.get(s.id);
+          if (!r) { r = makeRow(s); srv.rows.set(s.id, r); }
+          rowsFrag.append(r.el);
+        });
+        box.append(rowsFrag);
+        boxes.push(box);
+        frag.append(box);
+      });
+      srv.body.replaceChildren(frag);
+      boxes.forEach(fixList);
+      v.scrollTop = keep;
+    }
+    S.servers.forEach((s) => {
+      const r = srv.rows.get(s.id);
+      if (r && r.el.isConnected) paintRow(r, s);
     });
-    v.scrollTop = keep;
   }
 
   let liveRender = null;
@@ -874,7 +937,7 @@
   let noticeShown = false;
   function openNotice() {
     noticeShown = true;
-    openSheet(h("div", {}, h("h2", {}, "Старый интерфейс"), h("div", { class: "body" }, "С версии 2.0 старый интерфейс (Compose) будет удалён. Сейчас он уже не обновляется."),
+    openSheet(h("div", {}, h("h2", {}, "Версия 2.0"), h("div", { class: "body" }, "Старый интерфейс (Compose) удалён. Приложение работает на новом интерфейсе, его скорость и работа с большими списками серверов улучшены."),
       h("div", { class: "actions" }, h("button", { class: "btn filled", onclick: () => { closeSheet(); Bridge.act("noticeSeen"); } }, "Понятно"))));
   }
   let shownUpdate = "";
@@ -1151,23 +1214,18 @@
         }),
         action("Открыть страницу релизов", "Скачать APK вручную", () => Bridge.act("open", "https://github.com/Fasdeq13/FasdeqVPN/releases/"))),
       group("Интерфейс",
-        slider("textScale", "Размер текста", 0.8, 1.5, 0.05, (x) => Math.round(x * 100) + "%"),
-        action("Обычный интерфейс", "Вернуться к интерфейсу на Compose. Приложение перезапустится", () => Bridge.act("switchUi", "compose")))
+        slider("textScale", "Размер текста", 0.8, 1.5, 0.05, (x) => Math.round(x * 100) + "%"))
     );
     const dev = (name, role, url) => h("button", { class: "dev", onclick: () => Bridge.act("open", url) },
       h("div", { class: "avatar" }, Array.from(name)[0].toUpperCase()),
       h("div", { class: "grow" }, h("div", { class: "t" }, name), role ? h("div", { class: "s" }, role) : null));
-    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 1.9 · создатель fasdeq13"),
+    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 2.0 · создатель fasdeq13"),
       h("div", { class: "group-title tight" }, h("span", {}, "Участники")),
       h("div", { class: "devs" }, dev("Fasdeq13", "Создатель", "https://github.com/Fasdeq13/FasdeqVPN"), dev("fezix64", "", "https://github.com/fezix64"))));
   }
 
   function fixCorners() {
-    $$(".list").forEach((l) => {
-      const vis = Array.from(l.children).filter((x) => !x.hidden);
-      Array.from(l.children).forEach((x) => x.classList.remove("first", "last"));
-      if (vis.length) { vis[0].classList.add("first"); vis[vis.length - 1].classList.add("last"); }
-    });
+    $$(".list").forEach((l) => { if (!l.closest("#view-servers")) fixList(l); });
   }
 
   function fillIcons() {
@@ -1176,7 +1234,8 @@
     $("#i-nav-settings").setAttribute("d", ICONS.settings);
   }
 
-  function onState(next) {
+  function onState(next, light) {
+    if (light && S && S.__ready) { updateHome(); return; }
     const first = !S || !S.__ready;
     next.settings = merge(DEFAULTS, next.settings || {});
     applyPend(next.settings);

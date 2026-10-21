@@ -36,7 +36,6 @@ class WebBridge(private val host: WebUiActivity) {
 
     @JavascriptInterface
     fun ready() {
-        UiEngine.markReady(host)
     }
 
     @JavascriptInterface
@@ -47,6 +46,7 @@ class WebBridge(private val host: WebUiActivity) {
     @JavascriptInterface
     fun act(name: String, payload: String, id: Int) {
         main.post {
+            plugAt = 0L
             try {
                 handle(name, payload, id)
             } catch (e: Throwable) {
@@ -62,6 +62,30 @@ class WebBridge(private val host: WebUiActivity) {
     fun pushLater() {
         main.postDelayed({ push() }, 300)
         main.postDelayed({ push() }, 1200)
+    }
+
+    fun pushStats() {
+        val st = app
+        val o = JSONObject()
+            .put("rx", st.rx)
+            .put("tx", st.tx)
+            .put("down", st.downSpeed)
+            .put("up", st.upSpeed)
+            .put("uptime", st.uptime)
+        host.runJs("window.__fasdeqStats(" + JSONObject.quote(o.toString()) + ")")
+    }
+
+    private var plugCache: JSONObject? = null
+    private var plugAt = 0L
+
+    private fun plugins(): JSONObject {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val c = plugCache
+        if (c != null && now - plugAt < 800) return c
+        val fresh = Plugins.snapshot(host)
+        plugCache = fresh
+        plugAt = now
+        return fresh
     }
 
     fun push() {
@@ -287,7 +311,7 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id)
             }
             "noticeSeen" -> {
-                prefs.edit().putBoolean("notice18", true).apply()
+                prefs.edit().putBoolean("notice20", true).apply()
                 reply(id)
             }
             "haptic" -> {
@@ -301,10 +325,6 @@ class WebBridge(private val host: WebUiActivity) {
                     host.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(text)))
                 } catch (e: Throwable) {
                 }
-                reply(id)
-            }
-            "switchUi" -> {
-                UiEngine.switchTo(host, text)
                 reply(id)
             }
             "set" -> {
@@ -473,8 +493,8 @@ class WebBridge(private val host: WebUiActivity) {
         settings.put("mask", Identity.mask())
         settings.put("checkInterval", st.checkInterval.toDouble())
         o.put("settings", settings)
-        o.put("plugins", Plugins.snapshot(host))
-        o.put("notice", !prefs.getBoolean("notice18", false))
+        o.put("plugins", plugins())
+        o.put("notice", !prefs.getBoolean("notice20", false))
 
         val checks = JSONObject()
         for (s in st.servers) {

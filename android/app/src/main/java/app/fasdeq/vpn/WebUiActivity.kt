@@ -11,6 +11,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
@@ -159,13 +160,24 @@ class WebUiActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var last = 0
+                var lastStats = 0
+                var lastAt = 0L
                 var first = true
                 while (true) {
+                    val now = SystemClock.elapsedRealtime()
                     val h = stateHash()
-                    if (first || h != last) {
+                    if (first || (h != last && now - lastAt >= 350)) {
                         first = false
                         last = h
+                        lastAt = now
+                        lastStats = statsHash()
                         bridge.push()
+                    } else {
+                        val sh = statsHash()
+                        if (sh != lastStats) {
+                            lastStats = sh
+                            bridge.pushStats()
+                        }
                     }
                     delay(120)
                 }
@@ -173,10 +185,15 @@ class WebUiActivity : ComponentActivity() {
         }
     }
 
+    private fun statsHash(): Int {
+        val s = FasdeqApp.state
+        return listOf(s.rx, s.tx, s.downSpeed, s.upSpeed, s.uptime).hashCode()
+    }
+
     private fun stateHash(): Int {
         val s = FasdeqApp.state
         return listOf(
-            s.status, s.selectedId, s.rx, s.tx, s.downSpeed, s.upSpeed, s.uptime, s.error,
+            s.status, s.selectedId, s.error,
             s.servers.toList(), s.groups.toList(), s.pings.toMap(), s.checks.toMap(), s.checkingServices,
             s.themeMode, s.dynamicColors, s.amoled, s.autoConnect, s.dnsPreset, s.dnsCustom, s.mtu,
             s.pingMode, s.pingTimeout, s.autoPing, s.sortPing, s.tuning,

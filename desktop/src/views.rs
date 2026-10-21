@@ -923,7 +923,6 @@ fn settings_sheet<'a>(app: &'a App, ctx: &Ctx) -> El<'a> {
             vec![
                 setting_item(ctx, "palette", "Цвета системы (Material You)", "Палитра из обоев. Нужен Android 12+", false,
                     Some(switch(ctx, s.dynamic, Message::SetDynamic(!s.dynamic))), Some(Message::SetDynamic(!s.dynamic))),
-                setting_item(ctx, "screen", "Обычный интерфейс (Compose)", "Перезапустит приложение", false, None, Some(Message::SwitchUi("compose".into()))),
                 setting_item(ctx, "screen", "Интерфейс на egui (бета)", "Перезапустит приложение", false, None, Some(Message::SwitchUi("egui".into()))),
             ],
         ));

@@ -425,3 +425,5 @@ body.no-controls .seg .thumb { transition: none !important; }
 .row.drop-before { box-shadow: 0 -3px 0 0 var(--primary); }
 .row.drop-after { box-shadow: 0 3px 0 0 var(--primary); }
 .group-title.drop-head { box-shadow: inset 0 -3px 0 0 var(--primary); }
+.row[data-sid] { content-visibility: auto; contain-intrinsic-size: auto 68px; }
+.row[data-sid].dragging { content-visibility: visible; }

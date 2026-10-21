@@ -2,13 +2,23 @@
   const listeners = [];
   const native = window.FasdeqNative;
 
+  let current = null;
   function emit(state) {
+    current = state;
     for (const cb of listeners) cb(state);
   }
 
   if (native) {
     window.__fasdeqPush = function (json) {
       try { emit(JSON.parse(json)); } catch (e) {}
+    };
+    window.__fasdeqStats = function (json) {
+      try {
+        if (!current) return;
+        const p = JSON.parse(json);
+        current.rx = p.rx; current.tx = p.tx; current.down = p.down; current.up = p.up; current.uptime = p.uptime;
+        for (const cb of listeners) cb(current, true);
+      } catch (e) {}
     };
     const pending = {};
     let seq = 0;
@@ -61,7 +71,7 @@
       engine: "", busy: null, ui: [], catalog: null,
       families: [{ family: "wireguard-go", name: "WireGuard" }, { family: "amneziawg", name: "AmneziaWG" }],
     },
-    update: { available: true, checking: false, tag: "v1.9", url: "https://github.com/Fasdeq13/FasdeqVPN/releases/", notes: "Новый интерфейс, проверка сервисов", current: "1.8" },
+    update: { available: true, checking: false, tag: "v2.0", url: "https://github.com/Fasdeq13/FasdeqVPN/releases/", notes: "Compose удалён, быстрее работа с большими списками", current: "1.9" },
   };
   let timer = null;
   let ticker = null;
@@ -204,8 +214,6 @@
         case "pluginEnable": { const x = S.plugins.list.find((q) => q.key === payload.key); if (x) x.enabled = payload.value; push(); break; }
         case "pluginDelete": S.plugins.list = S.plugins.list.filter((q) => q.key !== payload); if (S.plugins.engine === payload) S.plugins.engine = ""; push(); break;
         case "pluginSet": { const x = S.plugins.list.find((q) => q.key === payload.key); if (x) x.values[payload.name] = payload.value; push(); break; }
-        case "switchUi":
-          return Promise.resolve({});
         case "clipboard":
           return Promise.resolve({ text: "vless://uuid@demo.example.net:443?security=reality#Демо" });
         case "haptic":
