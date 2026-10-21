@@ -53,7 +53,13 @@ data class Server(
     val group: String = ""
 )
 
-data class Group(val name: String, val url: String)
+data class Group(
+    val name: String,
+    val url: String,
+    val used: Long = 0,
+    val total: Long = -1,
+    val expire: Long = 0
+)
 
 object DnsPresets {
     val names = listOf("Cloudflare", "Google", "Quad9", "AdGuard", "Свой")
@@ -221,7 +227,7 @@ class AppState(private val app: Application) {
             val garr = o.optJSONArray("groups") ?: JSONArray()
             val glist = (0 until garr.length()).map {
                 val x = garr.getJSONObject(it)
-                Group(x.getString("name"), x.optString("url"))
+                Group(x.getString("name"), x.optString("url"), x.optLong("used", 0), x.optLong("total", -1), x.optLong("expire", 0))
             }
             servers.clear()
             servers.addAll(list)
@@ -534,7 +540,7 @@ class AppState(private val app: Application) {
         if (index < 0) {
             groups.add(Group(name, url))
         } else if (url.isNotBlank() && groups[index].url != url) {
-            groups[index] = Group(name, url)
+            groups[index] = groups[index].copy(url = url)
         }
     }
 
@@ -547,7 +553,7 @@ class AppState(private val app: Application) {
     ): String? {
         val input = text.trim()
         if (input.isEmpty()) return "Вставьте ссылку или конфигурацию"
-        class Item(val link: String, val group: String, val url: String)
+        class Item(val link: String, val group: String, val url: String, val info: SubInfo?)
         val items = ArrayList<Item>()
         val direct = ArrayList<String>()
         val prepared = Importer.prepare(input)
@@ -564,14 +570,14 @@ class AppState(private val app: Application) {
                 val groupName = forceGroup ?: source.name.ifBlank { fetched.group }
                 for (link in Importer.prepare(Links.decodeSubscription(fetched.body)).items) {
                     if (link.isUrl) continue
-                    items.add(Item(link.value, groupName, forceUrl.ifBlank { source.value }))
+                    items.add(Item(link.value, groupName, forceUrl.ifBlank { source.value }, fetched.info))
                 }
             } else {
                 direct.add(source.value)
             }
         }
         val directGroup = forceGroup ?: if (direct.size > 1) groupHint else ""
-        for (link in direct) items.add(Item(link, directGroup, forceUrl))
+        for (link in direct) items.add(Item(link, directGroup, forceUrl, null))
         var added = 0
         var failure: String? = null
         val fresh = ArrayList<Server>()
@@ -605,7 +611,10 @@ class AppState(private val app: Application) {
                     if (item.group.isNotBlank() && current.group != item.group.trim()) current = current.copy(group = item.group.trim())
                     if (current != servers[existing]) servers[existing] = current
                 }
-                if (item.group.isNotBlank()) ensureGroup(item.group.trim(), item.url)
+                if (item.group.isNotBlank()) {
+                    ensureGroup(item.group.trim(), item.url)
+                    item.info?.let { applyInfo(item.group.trim(), it) }
+                }
                 added++
             } catch (e: Exception) {
                 if (failure == null) failure = e.message ?: "Не удалось распознать"
@@ -614,6 +623,41 @@ class AppState(private val app: Application) {
         save()
         if (added > 0 && autoPing && fresh.isNotEmpty()) ping(fresh)
         return if (added == 0) (failure ?: "Не удалось распознать") else null
+    }
+
+    private fun applyInfo(name: String, info: SubInfo) {
+        val i = groups.indexOfFirst { it.name == name }
+        if (i >= 0) groups[i] = groups[i].copy(used = info.used, total = info.total, expire = info.expire)
+    }
+
+    suspend fun refreshInfo() {
+        for (g in groups.toList()) {
+            if (g.url.isBlank()) continue
+            try {
+                val f = withContext(Dispatchers.IO) { Links.fetchMeta(g.url) }
+                f.info?.let { applyInfo(g.name, it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+            }
+        }
+        save()
+    }
+
+    fun moveServer(id: String, group: String, beforeId: String?) {
+        val from = servers.indexOfFirst { it.id == id }
+        if (from < 0) return
+        val g = group.trim()
+        if (g.isNotEmpty() && groups.none { it.name == g }) return
+        var s = servers.removeAt(from)
+        if (s.group != g) s = s.copy(group = g)
+        var at = if (beforeId != null) servers.indexOfFirst { it.id == beforeId } else -1
+        if (at < 0) {
+            val last = servers.indexOfLast { it.group == g }
+            at = if (last >= 0) last + 1 else servers.size
+        }
+        servers.add(at, s)
+        save()
     }
 
     suspend fun refreshGroup(name: String): String? {
@@ -993,7 +1037,7 @@ class AppState(private val app: Application) {
             val arr = JSONArray(raw)
             (0 until arr.length()).map {
                 val o = arr.getJSONObject(it)
-                Group(o.getString("name"), o.optString("url"))
+                Group(o.getString("name"), o.optString("url"), o.optLong("used", 0), o.optLong("total", -1), o.optLong("expire", 0))
             }
         } catch (e: Exception) {
             emptyList()
@@ -1013,7 +1057,7 @@ class AppState(private val app: Application) {
             )
         }
         val garr = JSONArray()
-        groups.forEach { garr.put(JSONObject().put("name", it.name).put("url", it.url)) }
+        groups.forEach { garr.put(JSONObject().put("name", it.name).put("url", it.url).put("used", it.used).put("total", it.total).put("expire", it.expire)) }
         prefs.edit()
             .putString("servers", arr.toString())
             .putString("groups", garr.toString())

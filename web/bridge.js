@@ -50,7 +50,7 @@
       { id: "s5", name: "Домашний WireGuard", proto: "WireGuard", endpoint: "home.example.org:51820", group: "" },
     ],
     pings: { s1: { ms: 38 }, s2: { ms: 61 }, s3: { ms: 112 }, s4: { ms: 284 }, s5: { ms: null } },
-    groups: [{ name: "Основная", url: "https://example.com/sub" }, { name: "Запасные", url: "" }],
+    groups: [{ name: "Основная", url: "https://example.com/sub", used: 13555990528, total: 107374182400, expire: Math.floor(Date.now() / 1000) + 86400 * 142 }, { name: "Запасные", url: "https://example.com/sub2", used: 5368709120, total: 0, expire: 0 }],
     settings: {},
     services: { names: ["Discord", "Telegram", "YouTube"], checking: false, checks: {}, best: [] },
     cores: { active: "", builtin: "25.9.11", busy: null, list: [{ id: "c1", label: "Xray 25.8.3", version: "25.8.3" }], releases: null },
@@ -61,7 +61,7 @@
       engine: "", busy: null, ui: [], catalog: null,
       families: [{ family: "wireguard-go", name: "WireGuard" }, { family: "amneziawg", name: "AmneziaWG" }],
     },
-    update: { available: true, checking: false, tag: "v1.8", url: "https://github.com/Fasdeq13/FasdeqVPN/releases/", notes: "Новый интерфейс, проверка сервисов", current: "1.7" },
+    update: { available: true, checking: false, tag: "v1.9", url: "https://github.com/Fasdeq13/FasdeqVPN/releases/", notes: "Новый интерфейс, проверка сервисов", current: "1.8" },
   };
   let timer = null;
   let ticker = null;
@@ -138,6 +138,23 @@
           push();
           break;
         case "refreshGroup":
+          return Promise.resolve({});
+        case "moveServer": {
+          const i = S.servers.findIndex((x) => x.id === payload.id);
+          if (i < 0) break;
+          const sv = S.servers.splice(i, 1)[0];
+          sv.group = payload.group || "";
+          let at = payload.before ? S.servers.findIndex((x) => x.id === payload.before) : -1;
+          if (at < 0) {
+            let last = -1;
+            S.servers.forEach((x, k) => { if (x.group === sv.group) last = k; });
+            at = last >= 0 ? last + 1 : S.servers.length;
+          }
+          S.servers.splice(at, 0, sv);
+          push();
+          break;
+        }
+        case "refreshInfo":
           return Promise.resolve({});
         case "removeGroup":
           S.servers = S.servers.filter((s) => s.group !== payload);

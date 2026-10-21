@@ -10,7 +10,9 @@ import java.util.Base64
 
 data class Parsed(val name: String, val endpoint: String, val outbound: JSONObject)
 
-class Fetched(val body: String, val group: String)
+class SubInfo(val used: Long, val total: Long, val expire: Long)
+
+class Fetched(val body: String, val group: String, val info: SubInfo? = null)
 
 object Links {
 
@@ -236,13 +238,59 @@ object Links {
     }
 
     fun fetchMeta(url: String): Fetched {
+        var last: Exception? = null
+        for (m in Identity.order(url)) {
+            try {
+                val r = fetchOnce(url, m)
+                Identity.remember(url, m)
+                return r
+            } catch (e: java.io.IOException) {
+                last = e
+            } catch (e: IllegalStateException) {
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException("Не удалось загрузить")
+    }
+
+    private fun snippet(text: String): String {
+        val t = text.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
+        return if (t.length > 140) t.substring(0, 140) + "…" else t
+    }
+
+    private fun parseInfo(raw: String?): SubInfo? {
+        if (raw.isNullOrBlank()) return null
+        val m = HashMap<String, Long>()
+        for (part in raw.split(';')) {
+            val kv = part.trim().split('=', limit = 2)
+            if (kv.size == 2) kv[1].trim().toDoubleOrNull()?.let { m[kv[0].trim().lowercase()] = it.toLong() }
+        }
+        if (m.isEmpty()) return null
+        return SubInfo((m["upload"] ?: 0L) + (m["download"] ?: 0L), m["total"] ?: 0L, m["expire"] ?: 0L)
+    }
+
+    private fun fetchOnce(url: String, mask: Int): Fetched {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 10000
         c.readTimeout = 15000
-        Identity.apply(c)
+        Identity.apply(c, mask)
         try {
-            require(c.responseCode in 200..299) { "HTTP ${c.responseCode}" }
+            val code = c.responseCode
+            if (code !in 200..299) {
+                val err = try { c.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: "" } catch (e: Exception) { "" }
+                val tail = snippet(err)
+                throw IllegalStateException("HTTP $code" + if (tail.isNotEmpty()) ": $tail" else "")
+            }
+            if (c.getHeaderField("x-hwid-not-supported") != null || c.getHeaderField("x-hwid-max-devices-reached") != null) {
+                throw IllegalStateException("Сервер не принял устройство (HWID)")
+            }
             val body = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            val decoded = decodeSubscription(body)
+            val looksOk = decoded.contains("://") || decoded.trimStart().startsWith("{") || decoded.trimStart().startsWith("[") || decoded.contains("[Interface]", true)
+            if (!looksOk) {
+                val tail = snippet(body)
+                throw IllegalStateException(if (tail.isNotEmpty()) "Сервер ответил: $tail" else "Пустой ответ сервера")
+            }
             var title = c.getHeaderField("profile-title") ?: ""
             if (title.startsWith("base64:", true)) {
                 title = try {
@@ -253,15 +301,15 @@ object Links {
             }
             if (title.isBlank()) {
                 val cd = c.getHeaderField("content-disposition") ?: ""
-                val m = Regex("filename\\*?=(?:UTF-8'')?\"?([^\";]+)", RegexOption.IGNORE_CASE).find(cd)
+                val m = Regex("filename\\*?=(?:UTF-8\'\')?\"?([^\";]+)", RegexOption.IGNORE_CASE).find(cd)
                 if (m != null) title = decode(m.groupValues[1]).substringBeforeLast('.')
             }
             if (title.isBlank()) {
-                val m = Regex("(?im)^#\\s*profile-title\\s*:\\s*(.+)$").find(decodeSubscription(body))
+                val m = Regex("(?im)^#\\s*profile-title\\s*:\\s*(.+)$").find(decoded)
                 if (m != null) title = m.groupValues[1].trim()
             }
             if (title.isBlank()) title = c.url.host ?: ""
-            return Fetched(body, decode(title).trim())
+            return Fetched(body, decode(title).trim(), parseInfo(c.getHeaderField("subscription-userinfo")))
         } finally {
             c.disconnect()
         }

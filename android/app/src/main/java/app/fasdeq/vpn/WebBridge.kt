@@ -243,6 +243,17 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
                 push()
             }
+            "moveServer" -> {
+                val o = value as JSONObject
+                app.moveServer(o.getString("id"), o.optString("group"), if (o.isNull("before")) null else o.optString("before"))
+                reply(id)
+                push()
+            }
+            "refreshInfo" -> host.lifecycleScope.launch {
+                app.refreshInfo()
+                reply(id)
+                push()
+            }
             "clearGroup" -> {
                 app.clearGroup(text)
                 reply(id)
@@ -425,7 +436,7 @@ class WebBridge(private val host: WebUiActivity) {
         }
         o.put("servers", servers)
         val groups = JSONArray()
-        for (g in st.groups) groups.put(JSONObject().put("name", g.name).put("url", g.url))
+        for (g in st.groups) groups.put(JSONObject().put("name", g.name).put("url", g.url).put("used", g.used).put("total", g.total).put("expire", g.expire))
         o.put("groups", groups)
         val pings = JSONObject()
         for (s in st.servers) {

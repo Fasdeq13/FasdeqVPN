@@ -478,6 +478,144 @@
       return h("i", { class: "dot " + cls });
     }));
   }
+  const drag = { on: false, suppress: false };
+  function collapsedList() {
+    try { return JSON.parse(localStorage.getItem("tunn.collapsed") || "[]"); } catch (e) { return []; }
+  }
+  function isCollapsed(g) { return collapsedList().indexOf(g) >= 0; }
+  function toggleCollapsed(g) {
+    const l = collapsedList();
+    const i = l.indexOf(g);
+    if (i >= 0) l.splice(i, 1); else l.push(g);
+    try { localStorage.setItem("tunn.collapsed", JSON.stringify(l)); } catch (e) {}
+    srv.sig = "";
+    renderServers();
+    fixCorners();
+  }
+  function fmtBytes(n) {
+    const u = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+    let i = 0, x = Math.max(0, n);
+    while (x >= 1024 && i < 4) { x /= 1024; i++; }
+    return (i < 2 || x >= 100 ? Math.round(x) : x.toFixed(1)) + " " + u[i];
+  }
+  function fmtDate(sec) {
+    const d = new Date(sec * 1000);
+    const p = (n) => (n < 10 ? "0" : "") + n;
+    return p(d.getDate()) + "." + p(d.getMonth() + 1) + "." + d.getFullYear();
+  }
+  function groupInfo(name) {
+    const g = (S.groups || []).find((x) => x.name === name);
+    if (!g) return null;
+    const parts = [];
+    let bar = null;
+    if (g.total != null && g.total >= 0) {
+      parts.push(h("span", { class: "gi-main" }, "Израсходовано " + fmtBytes(g.used || 0) + " из " + (g.total === 0 ? "∞" : fmtBytes(g.total))));
+      if (g.total > 0) bar = h("div", { class: "gi-bar" }, h("i", { style: "width:" + clamp(((g.used || 0) / g.total) * 100, 0, 100) + "%" }));
+    }
+    if (g.expire && g.expire > 0) {
+      const days = Math.ceil((g.expire * 1000 - Date.now()) / 864e5);
+      parts.push(h("span", { class: "gi-main" + (days <= 0 ? " bad" : days <= 3 ? " warn" : "") }, days > 0 ? "Подписка до " + fmtDate(g.expire) + " · осталось " + days + " дн." : "Подписка истекла " + fmtDate(g.expire)));
+    }
+    if (!parts.length) return null;
+    return h("div", { class: "group-info" }, parts, bar);
+  }
+  function attachDrag(row, s) {
+    let timer = null, sx = 0, sy = 0, pid = null;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    row.addEventListener("contextmenu", (e) => e.preventDefault());
+    row.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      if (e.target.closest(".icon-btn")) return;
+      sx = e.clientX; sy = e.clientY; pid = e.pointerId;
+      cancel();
+      timer = setTimeout(() => { timer = null; startDrag(row, s, sx, sy, pid); }, 420);
+    });
+    row.addEventListener("pointermove", (e) => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
+    row.addEventListener("pointerup", cancel);
+    row.addEventListener("pointercancel", cancel);
+  }
+  function startDrag(row, s, sx, sy, pid) {
+    const view = $("#view-servers");
+    drag.on = true;
+    row.classList.add("dragging");
+    try { navigator.vibrate && navigator.vibrate(18); } catch (e) {}
+    try { row.setPointerCapture(pid); } catch (e) {}
+    let cy = sy, startScroll = view.scrollTop, target = null, last = null;
+    const block = (e) => { if (e.cancelable) e.preventDefault(); };
+    document.addEventListener("touchmove", block, { passive: false });
+    const clear = () => {
+      $$(".drop-before,.drop-after,.drop-head").forEach((x) => x.classList.remove("drop-before", "drop-after", "drop-head"));
+    };
+    const calc = (x, y) => {
+      row.style.pointerEvents = "none";
+      const els = document.elementsFromPoint(x, y);
+      row.style.pointerEvents = "";
+      clear();
+      target = null;
+      for (const el of els) {
+        const r = el.closest && el.closest(".row[data-sid]");
+        if (r && r !== row) {
+          const box = r.getBoundingClientRect();
+          const list = r.parentElement;
+          const rows = Array.from(list.querySelectorAll(".row[data-sid]")).filter((x) => x !== row);
+          const idx = rows.indexOf(r);
+          const after = y > box.top + box.height / 2;
+          const nextRow = after ? rows[idx + 1] : r;
+          target = { group: list.getAttribute("data-gid") || "", before: nextRow ? nextRow.getAttribute("data-sid") : null };
+          r.classList.add(after ? "drop-after" : "drop-before");
+          return;
+        }
+        const t = el.closest && el.closest(".group-title[data-gid]");
+        if (t) {
+          const gid = t.getAttribute("data-gid") || "";
+          const first = Array.from(view.querySelectorAll('.list[data-gid="' + CSS.escape(gid) + '"] .row[data-sid]')).filter((x) => x !== row)[0];
+          target = { group: gid, before: first ? first.getAttribute("data-sid") : null };
+          t.classList.add("drop-head");
+          return;
+        }
+      }
+    };
+    const place = () => {
+      const dy = cy - sy + (view.scrollTop - startScroll);
+      row.style.transform = "translateY(" + dy + "px) scale(1.02)";
+    };
+    const vr = view.getBoundingClientRect();
+    const loop = setInterval(() => {
+      if (cy < vr.top + 90) view.scrollTop -= 14;
+      else if (cy > vr.bottom - 140) view.scrollTop += 14;
+      else return;
+      place();
+      if (last) calc(last.x, cy);
+    }, 16);
+    const move = (e) => { cy = e.clientY; last = { x: e.clientX }; place(); calc(e.clientX, e.clientY); };
+    const finish = (apply) => {
+      clearInterval(loop);
+      document.removeEventListener("touchmove", block);
+      row.removeEventListener("pointermove", move);
+      row.removeEventListener("pointerup", up);
+      row.removeEventListener("pointercancel", cancelUp);
+      const t = apply ? target : null;
+      clear();
+      row.classList.remove("dragging");
+      row.style.transform = "";
+      drag.on = false;
+      drag.suppress = true;
+      setTimeout(() => { drag.suppress = false; }, 350);
+      srv.sig = "";
+      if (t) {
+        if (S.settings.sortPing && t.group === (s.group || "")) snack("Включена сортировка по пингу, порядок внутри группы не меняется");
+        Bridge.act("moveServer", { id: s.id, group: t.group, before: t.before });
+      }
+      renderServers();
+      fixCorners();
+    };
+    const up = () => finish(true);
+    const cancelUp = () => finish(false);
+    row.addEventListener("pointermove", move);
+    row.addEventListener("pointerup", up);
+    row.addEventListener("pointercancel", cancelUp);
+    place();
+  }
   function renameSheet(title, current, onSave) {
     const input = h("input", { class: "hex wide", value: current, spellcheck: "false", maxlength: 60 });
     const ok = h("button", { class: "btn filled", onclick: () => { const t = input.value.trim(); if (!t) return; closeSheet(); onSave(t); } }, "Сохранить");
@@ -485,7 +623,8 @@
     setTimeout(() => input.focus(), 350);
   }
   function renderServers() {
-    const sig = JSON.stringify([S.servers, S.groups, S.selected, S.pings, S.settings.sortPing, S.services, pingBusy()]);
+    const sig = JSON.stringify([S.servers, S.groups, S.selected, S.pings, S.settings.sortPing, S.services, pingBusy(), collapsedList()]);
+    if (drag.on) { srv.dirty = true; return; }
     if (sig === srv.sig) return;
     srv.sig = sig;
     const v = $("#view-servers");
@@ -509,19 +648,30 @@
     Object.keys(groups).forEach((g) => {
       const list = groups[g].slice();
       if (S.settings.sortPing) list.sort((x, y) => sortKey(x.id) - sortKey(y.id));
+      const folded = isCollapsed(g);
       const actions = h("div", { class: "group-actions" },
         h("button", { class: "icon-btn sm", "aria-label": "Проверить пинг группы", onclick: () => { Bridge.act("pingGroup", g); } }, icon("bolt")),
         g ? h("button", { class: "icon-btn sm", "aria-label": "Переименовать группу", onclick: () => renameSheet("Название группы", g, async (t) => { const r = await Bridge.act("renameGroup", { old: g, name: t }); if (r && r.error) snack(r.error); }) }, icon("edit")) : null,
         g && groupUrl(g) ? h("button", { class: "icon-btn sm", "aria-label": "Обновить подписку", onclick: async () => { const r = await Bridge.act("refreshGroup", g); snack(r && r.error ? r.error : "Подписка обновлена"); } }, icon("refresh")) : null,
         g ? h("button", { class: "icon-btn sm", "aria-label": "Удалить группу", onclick: () => { Bridge.act("removeGroup", g); snack("Группа удалена"); } }, icon("del")) : null);
-      v.append(h("div", { class: "group-title" }, h("span", {}, g || "Мои серверы"), actions));
-      v.append(h("div", { class: "list" }, list.map((s) => h("button", { class: "row" + (s.id === S.selected ? " selected" : ""), onclick: () => Bridge.act("select", s.id) },
-        h("div", { class: "avatar" }, Array.from(s.name)[0].toUpperCase()),
-        h("div", { class: "grow" }, h("div", { class: "t" }, s.name), h("div", { class: "s" }, s.proto + " · " + s.endpoint)),
-        h("div", { class: "side" }, pingChip(s.id), dotsFor(s.id)),
-        h("span", { class: "icon-btn", role: "button", "aria-label": "Переименовать", onclick: (e) => { e.stopPropagation(); renameSheet("Название сервера", s.name, (t) => Bridge.act("renameServer", { id: s.id, name: t })); } }, icon("edit")),
-        h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("remove", s.id); snack("Сервер удалён"); } }, icon("del"))
-      ))));
+      const fold = h("button", { class: "fold" + (folded ? " closed" : ""), "aria-label": folded ? "Развернуть группу" : "Свернуть группу", onclick: () => { toggleCollapsed(g); } },
+        icon("chevron"), h("span", {}, g || "Мои серверы"), folded ? h("em", {}, String(list.length)) : null);
+      const title = h("div", { class: "group-title", "data-gid": g }, fold, actions);
+      v.append(title);
+      const info = groupInfo(g);
+      if (info) v.append(info);
+      if (folded) return;
+      const box = h("div", { class: "list", "data-gid": g }, list.map((s) => {
+        const row = h("button", { class: "row" + (s.id === S.selected ? " selected" : ""), "data-sid": s.id, onclick: () => { if (drag.suppress) return; Bridge.act("select", s.id); } },
+          h("div", { class: "avatar" }, Array.from(s.name)[0].toUpperCase()),
+          h("div", { class: "grow" }, h("div", { class: "t" }, s.name), h("div", { class: "s" }, s.proto + " · " + s.endpoint)),
+          h("div", { class: "side" }, pingChip(s.id), dotsFor(s.id)),
+          h("span", { class: "icon-btn", role: "button", "aria-label": "Переименовать", onclick: (e) => { e.stopPropagation(); renameSheet("Название сервера", s.name, (t) => Bridge.act("renameServer", { id: s.id, name: t })); } }, icon("edit")),
+          h("span", { class: "icon-btn", role: "button", "aria-label": "Удалить", onclick: (e) => { e.stopPropagation(); Bridge.act("remove", s.id); snack("Сервер удалён"); } }, icon("del")));
+        attachDrag(row, s);
+        return row;
+      }));
+      v.append(box);
     });
     v.scrollTop = keep;
   }
@@ -1004,7 +1154,7 @@
     const dev = (name, role, url) => h("button", { class: "dev", onclick: () => Bridge.act("open", url) },
       h("div", { class: "avatar" }, Array.from(name)[0].toUpperCase()),
       h("div", { class: "grow" }, h("div", { class: "t" }, name), role ? h("div", { class: "s" }, role) : null));
-    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 1.8 · создатель fasdeq13"),
+    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 1.9 · создатель fasdeq13"),
       h("div", { class: "group-title tight" }, h("span", {}, "Участники")),
       h("div", { class: "devs" }, dev("Fasdeq13", "Создатель", "https://github.com/Fasdeq13/FasdeqVPN"), dev("fezix64", "", "https://github.com/fezix64"))));
   }
@@ -1065,6 +1215,7 @@
     $("#view-home").classList.add("active");
     $(".nav-item[data-go=home]").classList.add("active");
     onState(S);
+    try { Bridge.act("refreshInfo"); } catch (e) {}
     const q = new URLSearchParams(location.search);
     if (q.get("view")) { document.body.style.setProperty("--x", "1"); go(q.get("view")); }
     window.addEventListener("resize", () => refreshers.forEach((f) => f()));
