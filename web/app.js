@@ -78,7 +78,8 @@
   const DEFAULTS = {
     theme: 0, dynamic: false, amoled: false, tint: true,
     accent: { r: 64, g: 216, b: 208 },
-    anim: { all: true, pages: true, controls: true, sheets: true, enabled: true, speed: 1, intensity: 1, tempo: 1, burst: true, waves: 3, idle: true, iconFx: true, press: true, haptics: true, glow: 1 },
+    anim: { all: true, pages: true, controls: true, sheets: true, enabled: true, speed: 1, intensity: 1, tempo: 1, burst: true, waves: 3, idle: true, iconFx: true, press: true, haptics: true, ripple: true, list: true, fold: true, cards: true, pingFx: true, select: true, glow: 1 },
+    look: { style: 0, contrast: 0, tintLevel: 1, secHue: 0, terHue: 60, radius: 1, density: 1 },
     button: { size: 224, lobes: 10, shape: 0 },
     textScale: 1, autoCheck: false, mask: 1, checkInterval: 60, updates: { auto: true },
     autoConnect: false, dns: 0, dnsCustom: "", mtu: 1500,
@@ -125,9 +126,14 @@
   let themeKey = "", barsDark = null;
   function applyTheme() {
     const st = S.settings;
-    const key = JSON.stringify([st.theme, st.dynamic, st.amoled, st.tint, st.accent, S.dark, S.colors]);
+    const lk = Object.assign({}, DEFAULTS.look, st.look || {});
+    const key = JSON.stringify([st.theme, st.dynamic, st.amoled, st.tint, st.accent, S.dark, S.colors, lk]);
     if (key === themeKey) return;
     themeKey = key;
+    document.documentElement.style.setProperty("--rs", String(clamp(Number(lk.radius) || 1, 0.3, 2)));
+    document.documentElement.style.setProperty("--dn", String(clamp(Number(lk.density) || 1, 0.7, 1.5)));
+    srv.rowH = 68;
+    srv.sig = "";
     const sysDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     const dark = st.theme === 1 ? false : st.theme === 2 ? true : (S.dark !== undefined ? S.dark : sysDark);
     document.body.classList.toggle("light", !dark);
@@ -145,29 +151,40 @@
     const acc = st.accent;
     const hex = toHex(acc);
     const [L, C, H] = rgbToOklch(acc.r, acc.g, acc.b);
-    const grey = C < 0.025;
-    const tc = grey ? 0 : st.tint ? clamp(C * 0.1, 0.004, 0.022) : 0.004;
+    const styleI = clamp(Math.round(lk.style) || 0, 0, 4);
+    const grey = C < 0.025 || styleI === 4;
+    const ct = clamp(Math.round(lk.contrast) || 0, 0, 2);
+    const tintMul = [1, 1.8, 1.4, 0.35, 0][styleI] * clamp(Number(lk.tintLevel), 0, 2);
+    const tc = grey ? 0 : (st.tint ? clamp(C * 0.1, 0.004, 0.022) : 0.004) * tintMul;
+    const pc = [30, 42, 36, 18, 12][styleI];
+    const sc = [16, 22, 20, 8, 6][styleI];
+    const secH = (H + (Number(lk.secHue) || 0) + (styleI === 2 ? 40 : 0) + 360) % 360;
+    const useSecHue = !!Number(lk.secHue) || styleI === 2;
     const o = (l, c) => "oklch(" + l + " " + c + " " + H.toFixed(1) + ")";
+    const o2 = (l, c) => "oklch(" + l + " " + c + " " + secH.toFixed(1) + ")";
+    const sp = 1 + 0.4 * ct;
+    const lv = (base, x) => (base + (x - base) * sp).toFixed(3);
     set("--primary", hex);
     set("--on-primary", L > 0.62 ? "oklch(.2 0 0)" : "oklch(.99 0 0)");
     if (dark) {
-      set("--surface", o(0.17, tc)); set("--sc-low", o(0.2, tc)); set("--sc", o(0.225, tc * 1.1)); set("--sc-high", o(0.255, tc * 1.2)); set("--sc-highest", o(0.285, tc * 1.3));
-      set("--on-surface", o(0.92, tc)); set("--on-surface-variant", o(0.77, tc * 1.5)); set("--outline", o(0.58, tc * 1.5)); set("--outline-variant", o(0.38, tc * 1.5));
-      set("--primary-container", "color-mix(in oklab, " + hex + " 30%, " + o(0.2, tc) + ")");
+      set("--surface", o(0.17, tc)); set("--sc-low", o(lv(0.17, 0.2), tc)); set("--sc", o(lv(0.17, 0.225), tc * 1.1)); set("--sc-high", o(lv(0.17, 0.255), tc * 1.2)); set("--sc-highest", o(lv(0.17, 0.285), tc * 1.3));
+      set("--on-surface", o(0.92 + 0.03 * ct, tc)); set("--on-surface-variant", o(0.77 + 0.07 * ct, tc * 1.5)); set("--outline", o(0.58 + 0.08 * ct, tc * 1.5)); set("--outline-variant", o(0.38 + 0.1 * ct, tc * 1.5));
+      set("--primary-container", "color-mix(in oklab, " + hex + " " + (pc + 8 * ct) + "%, " + o(0.2, tc) + ")");
       set("--on-primary-container", grey ? "oklch(.94 0 0)" : o(0.92, Math.min(C, 0.05)));
-      set("--secondary-container", "color-mix(in oklab, " + hex + " 16%, " + o(0.27, tc) + ")");
-      set("--on-secondary-container", o(0.92, tc));
-      set("--accent-text", "oklch(" + Math.max(L, 0.74).toFixed(3) + " " + (grey ? 0 : C.toFixed(3)) + " " + H.toFixed(1) + ")");
+      set("--secondary-container", useSecHue && !grey ? o2(0.28 + 0.02 * ct, Math.min(C * 0.5, 0.075)) : "color-mix(in oklab, " + hex + " " + (sc + 5 * ct) + "%, " + o(0.27, tc) + ")");
+      set("--on-secondary-container", useSecHue && !grey ? o2(0.93, 0.03) : o(0.92, tc));
+      set("--accent-text", "oklch(" + Math.max(L, 0.74 + 0.05 * ct).toFixed(3) + " " + (grey ? 0 : C.toFixed(3)) + " " + H.toFixed(1) + ")");
     } else {
-      set("--surface", o(0.985, tc)); set("--sc-low", o(0.968, tc)); set("--sc", o(0.955, tc * 1.1)); set("--sc-high", o(0.94, tc * 1.2)); set("--sc-highest", o(0.92, tc * 1.3));
-      set("--on-surface", o(0.22, tc)); set("--on-surface-variant", o(0.42, tc * 1.5)); set("--outline", o(0.55, tc * 1.5)); set("--outline-variant", o(0.8, tc * 1.5));
-      set("--primary-container", "color-mix(in oklab, " + hex + " 28%, white)");
+      set("--surface", o(0.985, tc)); set("--sc-low", o(lv(0.985, 0.968), tc)); set("--sc", o(lv(0.985, 0.955), tc * 1.1)); set("--sc-high", o(lv(0.985, 0.94), tc * 1.2)); set("--sc-highest", o(lv(0.985, 0.92), tc * 1.3));
+      set("--on-surface", o(0.22 - 0.07 * ct, tc)); set("--on-surface-variant", o(0.42 - 0.09 * ct, tc * 1.5)); set("--outline", o(0.55 - 0.1 * ct, tc * 1.5)); set("--outline-variant", o(0.8 - 0.12 * ct, tc * 1.5));
+      set("--primary-container", "color-mix(in oklab, " + hex + " " + (pc - 2 + 8 * ct) + "%, white)");
       set("--on-primary-container", o(0.25, Math.min(C, 0.08)));
-      set("--secondary-container", "color-mix(in oklab, " + hex + " 16%, white)");
-      set("--on-secondary-container", o(0.25, tc));
-      set("--accent-text", "oklch(" + Math.min(L, 0.5).toFixed(3) + " " + (grey ? 0 : C.toFixed(3)) + " " + H.toFixed(1) + ")");
+      set("--secondary-container", useSecHue && !grey ? o2(0.91 - 0.02 * ct, Math.min(C * 0.4, 0.06)) : "color-mix(in oklab, " + hex + " " + (sc + 4 * ct) + "%, white)");
+      set("--on-secondary-container", useSecHue && !grey ? o2(0.25, 0.05) : o(0.25, tc));
+      set("--accent-text", "oklch(" + Math.min(L, 0.5 - 0.06 * ct).toFixed(3) + " " + (grey ? 0 : C.toFixed(3)) + " " + H.toFixed(1) + ")");
     }
-    set("--tertiary", "oklch(" + (dark ? 0.8 : 0.5) + " " + (grey ? 0 : 0.1) + " " + ((H + 60) % 360).toFixed(1) + ")");
+    const terC = grey ? 0 : [0.1, 0.15, 0.13, 0.07, 0][styleI];
+    set("--tertiary", "oklch(" + (dark ? 0.8 : 0.5) + " " + terC + " " + ((H + (Number(lk.terHue) || 0) + 360) % 360).toFixed(1) + ")");
   }
 
   let motionKey = "";
@@ -182,6 +199,12 @@
     b.toggle("no-controls", !a.controls);
     b.toggle("no-sheets", !a.sheets);
     b.toggle("no-burst", !a.burst || !a.enabled || !a.all);
+    b.toggle("no-ripple", !a.ripple);
+    b.toggle("no-list", !a.list);
+    b.toggle("no-fold", !a.fold);
+    b.toggle("no-cards", !a.cards);
+    b.toggle("no-pingfx", !a.pingFx);
+    b.toggle("no-select", !a.select);
     const root = document.documentElement.style;
     root.setProperty("--ts", String(clamp(Number(S.settings.textScale) || 1, 0.7, 1.6)));
     root.setProperty("--tempo", String(clamp(a.tempo, 0.2, 3)));
@@ -350,6 +373,13 @@
     });
     $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.go === name));
     current = name;
+    if (name === "servers") { srv.fresh = true; srv.sig = ""; renderServers(); }
+    const nv = $("#view-" + name);
+    if (nv && name !== "servers" && !document.body.classList.contains("no-cards")) {
+      Array.from(nv.querySelectorAll(".svc-card,.chip-card,:scope > .list,:scope > .group-title,:scope > .plugin-group")).slice(0, 14).forEach((el, i) => el.style.setProperty("--n", String(i)));
+      nv.classList.add("enter");
+      setTimeout(() => nv.classList.remove("enter"), 1300);
+    }
     Power.pause(380);
     $("#fab") && $("#fab").classList.toggle("hide", name !== "servers");
     if (name === "home") Power.kick();
@@ -489,6 +519,7 @@
     const i = l.indexOf(g);
     if (i >= 0) l.splice(i, 1); else l.push(g);
     S.collapsed = l;
+    srv.toggled = g;
     try { localStorage.setItem("tunn.collapsed", JSON.stringify(l)); } catch (e) {}
     Bridge.act("setCollapsed", l);
     srv.sig = "";
@@ -540,27 +571,31 @@
   function startDrag(row, s, sx, sy, pid) {
     const view = $("#view-servers");
     drag.on = true;
-    row.classList.add("dragging");
+    const rect = row.getBoundingClientRect();
+    const ghost = row.cloneNode(true);
+    ghost.classList.remove("first", "last", "selected");
+    ghost.classList.add("drag-ghost");
+    ghost.style.cssText = "position:fixed;left:" + rect.left + "px;top:" + rect.top + "px;width:" + rect.width + "px;margin:0;z-index:60;pointer-events:none";
+    $("#app").append(ghost);
+    row.classList.add("drag-src");
     try { navigator.vibrate && navigator.vibrate(18); } catch (e) {}
-    try { row.setPointerCapture(pid); } catch (e) {}
-    let cy = sy, startScroll = view.scrollTop, target = null, last = null;
+    try { view.setPointerCapture(pid); } catch (e) {}
+    let cy = sy, target = null, lastX = sx;
     const block = (e) => { if (e.cancelable) e.preventDefault(); };
     document.addEventListener("touchmove", block, { passive: false });
     const clear = () => {
       $$(".drop-before,.drop-after,.drop-head").forEach((x) => x.classList.remove("drop-before", "drop-after", "drop-head"));
     };
     const calc = (x, y) => {
-      row.style.pointerEvents = "none";
       const els = document.elementsFromPoint(x, y);
-      row.style.pointerEvents = "";
       clear();
       target = null;
       for (const el of els) {
         const r = el.closest && el.closest(".row[data-sid]");
-        if (r && r !== row) {
+        if (r && r.getAttribute("data-sid") !== s.id && !r.classList.contains("drag-ghost")) {
           const box = r.getBoundingClientRect();
           const list = r.parentElement;
-          const rows = Array.from(list.querySelectorAll(".row[data-sid]")).filter((x) => x !== row);
+          const rows = Array.from(list.querySelectorAll(".row[data-sid]")).filter((x) => x.getAttribute("data-sid") !== s.id);
           const idx = rows.indexOf(r);
           const after = y > box.top + box.height / 2;
           const nextRow = after ? rows[idx + 1] : r;
@@ -571,36 +606,32 @@
         const t = el.closest && el.closest(".group-title[data-gid]");
         if (t) {
           const gid = t.getAttribute("data-gid") || "";
-          const first = Array.from(view.querySelectorAll('.list[data-gid="' + CSS.escape(gid) + '"] .row[data-sid]')).filter((x) => x !== row)[0];
-          target = { group: gid, before: first ? first.getAttribute("data-sid") : null };
+          const first = (srv.groupIds[gid] || []).filter((x) => x !== s.id)[0];
+          target = { group: gid, before: first || null };
           t.classList.add("drop-head");
           return;
         }
       }
     };
-    const place = () => {
-      const dy = cy - sy + (view.scrollTop - startScroll);
-      row.style.transform = "translateY(" + dy + "px) scale(1.02)";
-    };
+    const place = () => { ghost.style.transform = "translateY(" + (cy - sy) + "px) scale(1.02)"; };
     const vr = view.getBoundingClientRect();
     const loop = setInterval(() => {
-      if (cy < vr.top + 90) view.scrollTop -= 14;
-      else if (cy > vr.bottom - 140) view.scrollTop += 14;
+      if (cy < vr.top + 90) view.scrollTop -= 16;
+      else if (cy > vr.bottom - 140) view.scrollTop += 16;
       else return;
-      place();
-      if (last) calc(last.x, cy);
+      calc(lastX, cy);
     }, 16);
-    const move = (e) => { cy = e.clientY; last = { x: e.clientX }; place(); calc(e.clientX, e.clientY); };
+    const move = (e) => { cy = e.clientY; lastX = e.clientX; place(); calc(e.clientX, e.clientY); };
     const finish = (apply) => {
       clearInterval(loop);
       document.removeEventListener("touchmove", block);
-      row.removeEventListener("pointermove", move);
-      row.removeEventListener("pointerup", up);
-      row.removeEventListener("pointercancel", cancelUp);
+      view.removeEventListener("pointermove", move);
+      view.removeEventListener("pointerup", up);
+      view.removeEventListener("pointercancel", cancelUp);
       const t = apply ? target : null;
       clear();
-      row.classList.remove("dragging");
-      row.style.transform = "";
+      ghost.remove();
+      row.classList.remove("drag-src");
       drag.on = false;
       drag.suppress = true;
       setTimeout(() => { drag.suppress = false; }, 350);
@@ -610,13 +641,12 @@
         Bridge.act("moveServer", { id: s.id, group: t.group, before: t.before });
       }
       renderServers();
-      fixCorners();
     };
     const up = () => finish(true);
     const cancelUp = () => finish(false);
-    row.addEventListener("pointermove", move);
-    row.addEventListener("pointerup", up);
-    row.addEventListener("pointercancel", cancelUp);
+    view.addEventListener("pointermove", move);
+    view.addEventListener("pointerup", up);
+    view.addEventListener("pointercancel", cancelUp);
     place();
   }
   function renameSheet(title, current, onSave) {
@@ -635,6 +665,81 @@
   srv.top = null;
   srv.body = null;
   srv.topSig = "";
+  function enterRow(el, i) {
+    const b = document.body.classList;
+    if (b.contains("no-list") || b.contains("no-motion") || i > 14) return;
+    el.style.setProperty("--i", String(i));
+    el.classList.add("enter");
+    setTimeout(() => { el.classList.remove("enter"); }, 1200);
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const b = document.body.classList;
+    if (b.contains("no-ripple") || b.contains("no-motion") || b.contains("no-controls")) return;
+    const el = e.target.closest && e.target.closest(".row:not(.drag-ghost),.btn,.icon-btn,.nav-item,.chip-card,.fab,.dev,.seg button");
+    if (!el || el.disabled) return;
+    const r = el.getBoundingClientRect();
+    const size = Math.max(r.width, r.height) * 2.2;
+    const sp = document.createElement("span");
+    sp.className = "rp";
+    sp.style.cssText = "width:" + size + "px;height:" + size + "px;left:" + (e.clientX - r.left - size / 2) + "px;top:" + (e.clientY - r.top - size / 2) + "px";
+    el.classList.add("rp-host");
+    el.append(sp);
+    setTimeout(() => sp.remove(), 800);
+  }, { passive: true });
+  const VIRT_MIN = 40;
+  srv.virt = [];
+  srv.groupIds = {};
+  srv.byId = {};
+  srv.rowH = 68;
+  srv.raf = 0;
+  srv.fresh = true;
+  srv.toggled = null;
+  srv.enterI = 0;
+  function updateWindows(force, scroll, again) {
+    const v = $("#view-servers");
+    if (!srv.virt.length || !v.clientHeight) return;
+    const st = scroll == null ? v.scrollTop : scroll;
+    const vr = v.getBoundingClientRect();
+    const buf = v.clientHeight;
+    let remeasure = false;
+    srv.virt.forEach((w) => {
+      const n = w.ids.length;
+      const rh = srv.rowH;
+      const boxTop = w.box.getBoundingClientRect().top - vr.top + v.scrollTop;
+      let s0 = Math.max(0, Math.floor((st - buf - boxTop) / rh));
+      let e0 = Math.min(n, Math.max(s0, Math.ceil((st + v.clientHeight + buf - boxTop) / rh)));
+      if (!force && w.start >= 0 && s0 >= w.start && e0 <= w.end) return;
+      s0 = Math.max(0, s0 - 8);
+      e0 = Math.min(n, e0 + 8);
+      w.start = s0;
+      w.end = e0;
+      const els = [];
+      for (let i = s0; i < e0; i++) {
+        const sv = srv.byId[w.ids[i]] || S.servers.find((x) => x.id === w.ids[i]);
+        if (!sv) continue;
+        let r = srv.rows.get(sv.id);
+        if (!r) { r = makeRow(sv); srv.rows.set(sv.id, r); }
+        paintRow(r, sv);
+        if (srv.fresh && w.start0 === undefined) enterRow(r.el, srv.enterI++);
+        r.el.classList.toggle("first", i === 0);
+        r.el.classList.toggle("last", i === n - 1);
+        els.push(r.el);
+      }
+      w.top.style.height = (s0 * rh) + "px";
+      w.bottom.style.height = ((n - e0) * rh) + "px";
+      w.box.replaceChildren(w.top, ...els, w.bottom);
+      w.start0 = 1;
+      if (els.length) {
+        const m = els[0].getBoundingClientRect().height + 2;
+        if (m > 20 && Math.abs(m - srv.rowH) > 0.5) { srv.rowH = m; remeasure = true; }
+      }
+    });
+    if (remeasure && !again) updateWindows(true, st, true);
+  }
+  function onServersScroll() {
+    if (srv.raf) return;
+    srv.raf = requestAnimationFrame(() => { srv.raf = 0; updateWindows(false); });
+  }
   function makeRow(s) {
     const id = s.id;
     const cur = () => S.servers.find((x) => x.id === id) || s;
@@ -657,15 +762,21 @@
     const sig = s.name + "|" + s.proto + "|" + s.endpoint + "|" + sel + "|" + (p.busy ? "b" : p.ms) + "|" + JSON.stringify(checkOf(s.id));
     if (sig === r.sig) return;
     r.sig = sig;
-    r.el.className = "row" + (sel ? " selected" : "");
+    const pingSig = p.busy ? "b" : String(p.ms);
+    const pingChanged = r.pingSig !== undefined && r.pingSig !== pingSig && !p.busy;
+    r.pingSig = pingSig;
+    r.el.classList.toggle("selected", sel);
+    if (sel && r.wasSel === false) {
+      r.el.classList.add("sel-pop");
+      setTimeout(() => r.el.classList.remove("sel-pop"), 500);
+    }
+    r.wasSel = sel;
     r.avatar.textContent = Array.from(s.name)[0].toUpperCase();
     r.t.textContent = s.name;
     r.sub.textContent = s.proto + " · " + s.endpoint;
-    r.side.replaceChildren(pingChip(s.id), dotsFor(s.id));
-    if (r.el.parentElement) {
-      const kids = r.el.parentElement.children;
-      if (kids.length && (kids[0] === r.el || kids[kids.length - 1] === r.el)) fixList(r.el.parentElement);
-    }
+    const chip = pingChip(s.id);
+    if (pingChanged) chip.classList.add("pop");
+    r.side.replaceChildren(chip, dotsFor(s.id));
   }
   function renderServers() {
     if (drag.on) { srv.dirty = true; return; }
@@ -707,35 +818,55 @@
       srv.rows.forEach((_, id) => { if (!live.has(id)) srv.rows.delete(id); });
       const frag = document.createDocumentFragment();
       const boxes = [];
+      srv.virt = [];
+      srv.groupIds = {};
+      srv.enterI = 0;
       names.forEach((g) => {
         const list = groups[g];
+        srv.groupIds[g] = list.map((x) => x.id);
         const folded = collapsed.indexOf(g) >= 0;
         const actions = h("div", { class: "group-actions" },
           h("button", { class: "icon-btn sm", "aria-label": "Проверить пинг группы", onclick: () => { Bridge.act("pingGroup", g); } }, icon("bolt")),
           g ? h("button", { class: "icon-btn sm", "aria-label": "Переименовать группу", onclick: () => renameSheet("Название группы", g, async (t) => { const r = await Bridge.act("renameGroup", { old: g, name: t }); if (r && r.error) snack(r.error); }) }, icon("edit")) : null,
           g && groupUrl(g) ? h("button", { class: "icon-btn sm", "aria-label": "Обновить подписку", onclick: async () => { const r = await Bridge.act("refreshGroup", g); snack(r && r.error ? r.error : "Подписка обновлена"); } }, icon("refresh")) : null,
           g ? h("button", { class: "icon-btn sm", "aria-label": "Удалить группу", onclick: () => { Bridge.act("removeGroup", g); snack("Группа удалена"); } }, icon("del")) : null);
-        const fold = h("button", { class: "fold" + (folded ? " closed" : ""), "aria-label": folded ? "Развернуть группу" : "Свернуть группу", onclick: () => { toggleCollapsed(g); } },
+        const tg = srv.toggled === g;
+        const fold = h("button", { class: "fold" + (folded ? " closed" : "") + (tg ? " tg" : ""), "aria-label": folded ? "Развернуть группу" : "Свернуть группу", onclick: () => { toggleCollapsed(g); } },
           icon("chevron"), h("span", {}, g || "Мои серверы"), folded ? h("em", {}, String(list.length)) : null);
         frag.append(h("div", { class: "group-title", "data-gid": g }, fold, actions));
         const info = groupInfo(g);
         if (info) frag.append(info);
         if (folded) return;
         const box = h("div", { class: "list", "data-gid": g });
-        const rowsFrag = document.createDocumentFragment();
-        list.forEach((s) => {
-          let r = srv.rows.get(s.id);
-          if (!r) { r = makeRow(s); srv.rows.set(s.id, r); }
-          rowsFrag.append(r.el);
-        });
-        box.append(rowsFrag);
-        boxes.push(box);
+        if (tg && !folded && !document.body.classList.contains("no-fold")) box.classList.add("unfold");
+        if (list.length > VIRT_MIN) {
+          const top = h("div", { class: "vspace" });
+          const bottom = h("div", { class: "vspace" });
+          box.classList.add("virt");
+          box.append(top, bottom);
+          srv.virt.push({ box, ids: srv.groupIds[g], top, bottom, start: -1, end: -1 });
+        } else {
+          const rowsFrag = document.createDocumentFragment();
+          list.forEach((s) => {
+            let r = srv.rows.get(s.id);
+            if (!r) { r = makeRow(s); srv.rows.set(s.id, r); }
+            rowsFrag.append(r.el);
+            if (srv.fresh) enterRow(r.el, srv.enterI++);
+          });
+          box.append(rowsFrag);
+          boxes.push(box);
+        }
         frag.append(box);
       });
       srv.body.replaceChildren(frag);
       boxes.forEach(fixList);
+      updateWindows(true, keep);
       v.scrollTop = keep;
+      srv.fresh = false;
+      srv.toggled = null;
     }
+    srv.byId = {};
+    S.servers.forEach((s) => { srv.byId[s.id] = s; });
     S.servers.forEach((s) => {
       const r = srv.rows.get(s.id);
       if (r && r.el.isConnected) paintRow(r, s);
@@ -1085,6 +1216,11 @@
     box.addEventListener("pointercancel", end);
   }
 
+  function palettePreview() {
+    const roles = [["--primary", "Основной"], ["--primary-container", "Контейнер"], ["--secondary-container", "Вторичный"], ["--tertiary", "Третичный"], ["--sc-high", "Поверхность"], ["--outline", "Контур"]];
+    return h("div", { class: "row block" }, h("div", { class: "head" }, h("div", { class: "t" }, "Палитра")),
+      h("div", { class: "pal" }, roles.map((r) => h("div", { class: "pal-i" }, h("i", { style: "background:var(" + r[0] + ")" }), h("span", {}, r[1])))));
+  }
   function colorEditor() {
     const prev = h("div", { class: "rgb-preview" });
     const name = h("span", {}, "");
@@ -1146,11 +1282,27 @@
         sw("dynamic", "Цвета системы", "Палитра из обоев вместо своего цвета. Android 12 и новее"),
         sw("tint", "Оттенять фон цветом", "Выключите для нейтральных серых поверхностей"),
         sw("amoled", "Чёрный фон", "Для OLED-экранов в тёмной теме")),
+      group("Material You: детально",
+        palettePreview(),
+        seg("look.style", ["Базовая", "Яркая", "Живая", "Мягкая", "Моно"], "Стиль палитры", () => !S.settings.dynamic),
+        seg("look.contrast", ["Стандарт", "Средний", "Высокий"], "Контрастность", () => !S.settings.dynamic),
+        slider("look.tintLevel", "Насыщенность поверхностей", 0, 2, 0.05, (x) => Math.round(x * 100) + "%", () => !S.settings.dynamic),
+        slider("look.secHue", "Сдвиг вторичного цвета", -90, 90, 5, (x) => (x > 0 ? "+" : "") + x + "°", () => !S.settings.dynamic),
+        slider("look.terHue", "Оттенок третичного цвета", 0, 360, 5, (x) => x + "°", () => !S.settings.dynamic),
+        slider("look.radius", "Скругление углов", 0.4, 1.6, 0.05, (x) => Math.round(x * 100) + "%"),
+        slider("look.density", "Плотность списков", 0.8, 1.3, 0.05, (x) => Math.round(x * 100) + "%"),
+        action("Сбросить оформление", "Вернуть значения Material You по умолчанию", () => { setPath("look", Object.assign({}, DEFAULTS.look)); snack("Оформление сброшено"); })),
       group("Анимации",
         sw("anim.all", "Все анимации", "Главный выключатель: выключите, и всё станет мгновенным"),
         sw("anim.pages", "Переходы между экранами", "Сдвиг при переключении вкладок", anim),
         sw("anim.controls", "Переключатели и нажатия", "Движение переключателей, ползунков, кнопок", anim),
         sw("anim.sheets", "Панели и уведомления", "Выезд нижних панелей и сообщений", anim),
+        sw("anim.ripple", "Волна при нажатии", "Круговая волна на кнопках и строках", anim),
+        sw("anim.list", "Появление списков", "Серверы выезжают по очереди", anim),
+        sw("anim.cards", "Появление карточек", "Каскад при открытии экрана", anim),
+        sw("anim.fold", "Сворачивание групп", "Плавное раскрытие и поворот стрелки", anim),
+        sw("anim.pingFx", "Отклик пинга", "Пульс значения при обновлении", anim),
+        sw("anim.select", "Выбор сервера", "Мягкая вспышка выбранной строки", anim),
         sw("anim.enabled", "Анимация кнопки питания", "Деформация, волны, вращение", anim),
         slider("anim.speed", "Скорость интерфейса", 0.25, 3, 0.05, (x) => "×" + x.toFixed(2), anim)),
       group("Кнопка питания",
@@ -1273,6 +1425,8 @@
     $$(".nav-item").forEach((n) => n.addEventListener("click", () => go(n.dataset.go)));
     $("#scrim").addEventListener("click", closeSheet);
     Bridge.onState(onState);
+    $("#view-servers").addEventListener("scroll", onServersScroll, { passive: true });
+    window.addEventListener("resize", () => { srv.rowH = 68; updateWindows(true); });
     $$(".view").forEach((v) => v.classList.toggle("left", v.dataset.view !== "home"));
     $("#view-home").classList.add("active");
     $(".nav-item[data-go=home]").classList.add("active");

@@ -302,7 +302,7 @@ class AppState(private val app: Application) {
                 val due = checkedAt + (checkInterval * 60_000f).toLong()
                 val wait = due - System.currentTimeMillis()
                 if (wait <= 0L) {
-                    if (!checkingServices && servers.isNotEmpty()) checkServices()
+                    if (!checkingServices && servers.isNotEmpty()) checkServices(listOfNotNull(servers.firstOrNull { it.id == selectedId }))
                     delay(2_000L)
                 } else {
                     delay(wait.coerceIn(500L, 5_000L))
@@ -326,45 +326,65 @@ class AppState(private val app: Application) {
         }
     }
 
-    fun checkServices() {
+    private val probeLock = Any()
+
+    fun checkServices(only: List<Server>? = null) {
         if (checkingServices || servers.isEmpty()) return
+        val list = only ?: servers.toList()
+        if (list.isEmpty()) return
         checkingServices = true
-        val list = servers.toList()
         list.forEach { checks[it.id] = (checks[it.id] ?: ServiceCheck()).copy(busy = true) }
         val unsupported = AtomicBoolean(false)
-        val counters = list.associate { it.id to AtomicInteger(Services.names.size) }
         scope.launch {
             val gate = Semaphore(8)
-            list.flatMap { server ->
-                val config = probeConfigFor(server)
-                val wireguard = Wg.isConf(server.conf)
-                val lock = Mutex()
-                Services.names.indices.map { index ->
+            val saver = launch(Dispatchers.IO) {
+                while (isActive) {
+                    delay(3_000L)
+                    saveChecks()
+                }
+            }
+            try {
+                list.map { server ->
                     launch(Dispatchers.IO) {
-                        val run: suspend () -> Unit = {
-                            val value = if (config == null) Services.SKIPPED else gate.withPermit { Services.check(config, index) }
-                            if (value == Services.UNSUPPORTED) unsupported.set(true)
-                            val stored = if (value > 0 || value == Services.PARTIAL || value == Services.SKIPPED) value else -1
+                        gate.withPermit {
+                            val config = synchronized(probeLock) { probeConfigFor(server) }
+                            var firstFailed = false
+                            val last = Services.names.size - 1
+                            for (index in 0..last) {
+                                if (unsupported.get()) break
+                                val value = if (config == null) Services.SKIPPED else Services.check(config, index, if (firstFailed) 1 else 2)
+                                if (value == Services.UNSUPPORTED) unsupported.set(true)
+                                val stored = if (value > 0 || value == Services.PARTIAL || value == Services.SKIPPED) value else -1
+                                if (index == 0 && stored == -1) firstFailed = true
+                                synchronized(checks) {
+                                    val current = checks[server.id] ?: ServiceCheck(busy = true)
+                                    checks[server.id] = current.with(index, stored).copy(busy = index < last)
+                                }
+                            }
                             synchronized(checks) {
-                                val left = counters.getValue(server.id).decrementAndGet()
-                                val current = checks[server.id] ?: ServiceCheck(busy = true)
-                                checks[server.id] = current
-                                    .with(index, stored)
-                                    .copy(busy = left > 0)
+                                val current = checks[server.id]
+                                if (current != null && current.busy) checks[server.id] = current.copy(busy = false)
                             }
                         }
-                        if (wireguard) lock.withLock { run() } else run()
+                    }
+                }.joinAll()
+            } finally {
+                saver.cancel()
+                checkingServices = false
+                list.forEach {
+                    synchronized(checks) {
+                        val current = checks[it.id]
+                        if (current != null && current.busy) checks[it.id] = current.copy(busy = false)
                     }
                 }
-            }.joinAll()
-            checkingServices = false
-            if (unsupported.get()) {
-                checks.clear()
-                error = "Встроенное ядро не умеет проверять сервисы"
-            } else {
-                checkedAt = System.currentTimeMillis()
+                if (unsupported.get()) {
+                    checks.clear()
+                    error = "Встроенное ядро не умеет проверять сервисы"
+                } else {
+                    checkedAt = System.currentTimeMillis()
+                }
+                saveChecks()
             }
-            saveChecks()
         }
     }
 

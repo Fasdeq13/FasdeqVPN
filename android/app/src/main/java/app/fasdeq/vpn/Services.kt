@@ -86,9 +86,9 @@ object Services {
         }
     }
 
-    fun check(config: String, index: Int): Int {
-        for (u in mirrors[index]) {
-            val v = delay(config, u, 6)
+    fun check(config: String, index: Int, tries: Int = 2): Int {
+        for (u in mirrors[index].take(tries)) {
+            val v = delay(config, u, 5)
             if (v == UNSUPPORTED) return UNSUPPORTED
             if (v > 0) return v
         }
