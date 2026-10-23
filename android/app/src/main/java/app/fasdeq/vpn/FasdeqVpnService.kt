@@ -56,7 +56,9 @@ class FasdeqVpnService : VpnService() {
         val rules: String = "",
         val pluginLib: String = "",
         val pluginConf: String = "",
-        val awgConf: String = ""
+        val awgConf: String = "",
+        val engine: String = "xray",
+        val dpi: Boolean = false
     )
 
     private fun handler(gen: Int) = object : CoreCallbackHandler {
@@ -89,7 +91,9 @@ class FasdeqVpnService : VpnService() {
                     intent.getStringExtra(EXTRA_RULES) ?: "",
                     intent.getStringExtra(EXTRA_PLUGIN_LIB) ?: "",
                     intent.getStringExtra(EXTRA_PLUGIN_CONF) ?: "",
-                    intent.getStringExtra(EXTRA_AWG_CONF) ?: ""
+                    intent.getStringExtra(EXTRA_AWG_CONF) ?: "",
+                    intent.getStringExtra(EXTRA_ENGINE) ?: "xray",
+                    intent.getBooleanExtra(EXTRA_DPI, false)
                 )
             }
             serverName = intent.getStringExtra(EXTRA_NAME) ?: ""
@@ -238,12 +242,13 @@ class FasdeqVpnService : VpnService() {
         true
     }
 
-    private fun startChild(path: String, outbound: JSONObject): Int {
+    private fun startChild(path: String, outbound: JSONObject, singbox: Boolean = false): Int {
         killOrphan()
         val port = ServerSocket(0).use { it.localPort }
         Links.resolve(outbound)
         val cfg = File(filesDir, "core_run.json")
-        cfg.writeText(Links.buildInner(outbound, port))
+        cfg.writeText(if (singbox) SingBox.buildConfig(outbound, port) else Links.buildInner(outbound, port))
+        val label = if (singbox) "sing-box" else "Xray"
         val process = ProcessBuilder(listOf(Cores.linker(), path, "run", "-c", cfg.absolutePath))
             .redirectErrorStream(true)
             .directory(filesDir)
@@ -272,7 +277,7 @@ class FasdeqVpnService : VpnService() {
         while (SystemClock.elapsedRealtime() < deadline) {
             if (!alive(process)) {
                 val last = synchronized(tail) { tail.lastOrNull() } ?: "без вывода"
-                throw IllegalStateException("Ядро Xray завершилось: $last")
+                throw IllegalStateException("Ядро $label завершилось: $last")
             }
             try {
                 Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 200) }
@@ -281,14 +286,14 @@ class FasdeqVpnService : VpnService() {
                         process.waitFor()
                     } catch (e: Throwable) {
                     }
-                    if (child === process && !stopping && !halted) halt("Ядро Xray остановилось")
+                    if (child === process && !stopping && !halted) halt("Ядро $label остановилось")
                 }.start()
                 return port
             } catch (e: Exception) {
                 Thread.sleep(150)
             }
         }
-        throw IllegalStateException("Ядро Xray не запустилось")
+        throw IllegalStateException("Ядро $label не запустилось")
     }
 
     private fun start(params: Params) {
@@ -310,7 +315,13 @@ class FasdeqVpnService : VpnService() {
                     val rules = parseRules(params.rules)
                     val outbound = JSONObject(params.outbound)
                     val config: String
-                    if (params.core.isNotEmpty() && File(params.core).exists()) {
+                    if (params.dpi) {
+                        val port = DpiProxy.start(this)
+                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu, params.tuning, rules)
+                    } else if (params.engine == CorePlugins.SINGBOX) {
+                        val port = startChild(CorePlugins.singboxFile(this).absolutePath, outbound, true)
+                        config = Links.buildConfig(Links.socksOutbound(port), params.mtu, params.tuning, rules)
+                    } else if (params.core.isNotEmpty() && File(params.core).exists()) {
                         val port = startChild(params.core, outbound)
                         config = Links.buildConfig(Links.socksOutbound(port), params.mtu, params.tuning, rules)
                     } else {
@@ -599,6 +610,7 @@ class FasdeqVpnService : VpnService() {
     }
 
     private fun closeCore(wait: Long) {
+        DpiProxy.stop()
         stopping = true
         unregisterNet()
         val core = controller
@@ -693,6 +705,8 @@ class FasdeqVpnService : VpnService() {
         const val EXTRA_PLUGIN_LIB = "plugin_lib"
         const val EXTRA_PLUGIN_CONF = "plugin_conf"
         const val EXTRA_AWG_CONF = "awg_conf"
+        const val EXTRA_ENGINE = "engine"
+        const val EXTRA_DPI = "dpi"
         private const val CHANNEL = "vpn_state_quiet"
         private const val NOTIFICATION_ID = 1
     }

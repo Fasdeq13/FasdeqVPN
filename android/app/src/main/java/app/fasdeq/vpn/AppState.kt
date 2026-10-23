@@ -191,6 +191,7 @@ class AppState(private val app: Application) {
             IntentFilter(VpnBridge.ACTION_STATE),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        syncDpiServer()
         syncExternal()
         scope.launch {
             while (true) {
@@ -312,6 +313,7 @@ class AppState(private val app: Application) {
     }
 
     private fun probeConfigFor(server: Server): String? {
+        if (server.conf == CorePlugins.DPI_CONF) return null
         val plugin = try {
             Plugins.forConf(app, server.conf)
         } catch (e: Throwable) {
@@ -753,7 +755,8 @@ class AppState(private val app: Application) {
         save()
     }
 
-    fun ping(list: List<Server>): Job {
+    fun ping(all: List<Server>): Job {
+        val list = all.filter { it.conf != CorePlugins.DPI_CONF }
         if (list.isEmpty()) return Job().also { it.complete() }
         val mode = pingMode
         val timeout = PingOptions.timeouts[pingTimeout.coerceIn(0, PingOptions.timeouts.size - 1)]
@@ -946,15 +949,47 @@ class AppState(private val app: Application) {
         if (message != null) error = message
     }
 
+    fun syncDpiServer() {
+        val want = CorePlugins.enabled(app, CorePlugins.DPI) && CorePlugins.present(app, CorePlugins.DPI)
+        val index = servers.indexOfFirst { it.id == CorePlugins.DPI_ID }
+        if (want && index < 0) {
+            servers.add(0, Server(CorePlugins.DPI_ID, CorePlugins.DPI_NAME, CorePlugins.DPI_CONF, "DPI", ""))
+            if (selectedId == null) selectedId = CorePlugins.DPI_ID
+            save()
+        } else if (!want && index >= 0) {
+            removeMany(setOf(CorePlugins.DPI_ID))
+        }
+    }
+
+    suspend fun restoreXray(): String? = withContext(Dispatchers.IO) {
+        try {
+            val release = Cores.releases().firstOrNull() ?: return@withContext "Не удалось получить список версий Xray"
+            val bytes = Cores.download(release.url)
+            val info = Cores.install(app, java.io.ByteArrayInputStream(bytes), release.tag)
+            Cores.setActive(app, info.id)
+            CorePlugins.restore(app, CorePlugins.XRAY)
+            null
+        } catch (e: Exception) {
+            e.message ?: "Не удалось скачать Xray"
+        }
+    }
+
     private fun launchSwitch(target: Server) {
-        val plugin = try {
+        val dpi = target.conf == CorePlugins.DPI_CONF
+        val plugin = if (dpi) null else try {
             Plugins.forConf(app, target.conf)
         } catch (e: Throwable) {
             null
         }
-        val awg = plugin == null && Plugins.usesAwg(app, target.conf)
-        val outbound = if (plugin != null || awg) "{}" else try {
-            Links.parse(Plugins.effectiveConf(app, target.conf)).outbound.toString()
+        val awg = !dpi && plugin == null && Plugins.usesAwg(app, target.conf)
+        var engine = CorePlugins.XRAY
+        val outbound = if (dpi || plugin != null || awg) "{}" else try {
+            val parsed = Links.parse(Plugins.effectiveConf(app, target.conf)).outbound
+            engine = CorePlugins.pick(app, parsed) ?: run {
+                error = "Ядро не найдено. Скачайте Xray: Настройки, Плагины"
+                return
+            }
+            parsed.toString()
         } catch (e: Exception) {
             error = e.message ?: "Неверная конфигурация"
             return
@@ -973,6 +1008,8 @@ class AppState(private val app: Application) {
             .putExtra(FasdeqVpnService.EXTRA_NAME, target.name)
             .putExtra(FasdeqVpnService.EXTRA_ID, target.id)
             .putExtra(FasdeqVpnService.EXTRA_RULES, Plugins.rules(app).toString())
+            .putExtra(FasdeqVpnService.EXTRA_ENGINE, engine)
+            .putExtra(FasdeqVpnService.EXTRA_DPI, dpi)
         if (awg) {
             val conf = try {
                 Plugins.awgConf(app, Plugins.effectiveConf(app, target.conf))
@@ -993,6 +1030,7 @@ class AppState(private val app: Application) {
             error = e.message ?: "Не удалось запустить службу"
             return
         }
+        if (dpi && Dpi.chosen(app) == null && !DpiSearch.isRunning()) DpiService.start(app)
         timeoutJob?.cancel()
         timeoutJob = scope.launch {
             delay(20000)

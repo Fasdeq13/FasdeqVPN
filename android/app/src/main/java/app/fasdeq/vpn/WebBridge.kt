@@ -207,6 +207,35 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
                 push()
             }
+            "corePlugin" -> {
+                val o = value as JSONObject
+                val pid = o.getString("id")
+                when (o.getString("op")) {
+                    "enable" -> CorePlugins.setEnabled(host, pid, o.getBoolean("value"))
+                    "primary" -> CorePlugins.setPrimary(host, pid)
+                    "delete" -> CorePlugins.delete(host, pid)
+                    "restore" -> {
+                        host.lifecycleScope.launch {
+                            val err = if (pid == CorePlugins.XRAY) app.restoreXray() else null
+                            app.syncDpiServer()
+                            reply(id, if (err != null) JSONObject().put("error", err) else JSONObject())
+                            push()
+                        }
+                        return
+                    }
+                }
+                app.syncDpiServer()
+                reply(id)
+                push()
+            }
+            "dpiSearch" -> {
+                Dpi.forget(host)
+                Dpi.setStatus(host, "searching", 0, Dpi.strategies.size, "")
+                DpiService.start(host)
+                reply(id, Dpi.status(host))
+                push()
+            }
+            "dpiStatus" -> reply(id, Dpi.status(host))
             "pluginEnable" -> {
                 val o = value as JSONObject
                 Plugins.setEnabled(host, o.getString("key"), o.getBoolean("value"))
@@ -528,6 +557,8 @@ class WebBridge(private val host: WebUiActivity) {
                 .put("list", coreList)
                 .put("releases", if (rel == null) JSONObject.NULL else relArr)
         )
+
+        o.put("corePlugins", CorePlugins.snapshot(host))
 
         val up = Updates.state
         o.put(

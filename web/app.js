@@ -971,8 +971,39 @@
     openSheet(h("div", {}, h("h2", {}, "Плагин по ссылке"), h("div", { class: "body" }, "Прямая ссылка https на .zip с plugin.json"), h("div", { style: "margin:16px 0" }, input), h("div", { class: "actions" }, h("button", { class: "btn text", onclick: closeSheet }, "Отмена"), go_)));
   }
 
+  function dpiLine(d) {
+    if (!d) return "";
+    if (d.state === "searching") return "подбор " + (d.done || 0) + "/" + (d.total || 0);
+    return d.strategy ? "стратегия: " + d.strategy : "ещё не подбиралась";
+  }
+  let dpiPolling = false;
+  async function pollDpi() {
+    if (dpiPolling) return;
+    dpiPolling = true;
+    for (let i = 0; i < 150; i++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const r = await Bridge.act("dpiStatus");
+      if (S.corePlugins && r) { S.corePlugins.dpi = r; refreshLive(); }
+      if (!r || r.state !== "searching") break;
+    }
+    dpiPolling = false;
+  }
+  function corePluginRows() {
+    const CP = S.corePlugins || { list: [], dpi: {} };
+    return CP.list.map((p) => h("div", { class: "row plug" },
+      h("div", { class: "grow" },
+        h("div", { class: "t" }, p.name + (p.primary ? " · основное" : "")),
+        h("div", { class: "s" }, p.description + (p.id === "dpi" && p.present ? " · " + dpiLine(CP.dpi) : ""))),
+      p.core && p.present && p.enabled && !p.primary ? h("button", { class: "btn text sm", onclick: () => Bridge.act("corePlugin", { id: p.id, op: "primary" }) }, "Основным") : null,
+      p.id === "dpi" && p.present && p.enabled ? h("button", { class: "btn text sm", onclick: () => { Bridge.act("dpiSearch"); snack("Подбор начался, это может занять до 5 минут и идёт в фоне"); pollDpi(); } }, "Заново") : null,
+      p.present ? h("button", { class: "switch" + (p.enabled ? " on" : ""), "aria-label": "Включить", onclick: () => Bridge.act("corePlugin", { id: p.id, op: "enable", value: !p.enabled }) }) : null,
+      p.present ? h("button", { class: "icon-btn", "aria-label": "Удалить", onclick: () => Bridge.act("corePlugin", { id: p.id, op: "delete" }) }, icon("del"))
+        : (p.id === "xray" ? h("button", { class: "btn tonal sm", onclick: async () => { snack("Скачиваю Xray…"); const r = await Bridge.act("corePlugin", { id: "xray", op: "restore" }); if (r && r.error) snack(r.error); } }, icon("download"), "Скачать") : null)));
+  }
+
   function openPlugins() {
     plg.msg = "";
+    if (S.corePlugins && S.corePlugins.dpi && S.corePlugins.dpi.state === "searching") pollDpi();
     openLive(() => {
       const P = S.plugins;
       const busy = !!P.busy;
@@ -985,6 +1016,8 @@
       const out = h("div", {}, h("h2", {}, "Плагины"),
         h("div", { class: "body" }, "Расширения: свои протоколы (.so), правила обхода для приложений и доменов, дополнения интерфейса. Плагины выполняют код, ставьте только из доверенных источников."),
         busyLine(),
+        h("div", { class: "group-title" }, h("span", {}, "Встроенные")),
+        h("div", { class: "list" }, corePluginRows()),
         h("div", { class: "group-title" }, h("span", {}, "Установленные")),
         rows.length ? h("div", { class: "list" }, rows) : h("div", { class: "body" }, "Плагинов пока нет"),
         h("div", { class: "actions split" },
