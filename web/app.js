@@ -974,7 +974,7 @@
   function dpiLine(d) {
     if (!d) return "";
     if (d.state === "searching") return "подбор " + (d.done || 0) + "/" + (d.total || 0);
-    return d.strategy ? "стратегия: " + d.strategy : "ещё не подбиралась";
+    return (d.strategy ? "стратегия: " + d.strategy : "ещё не подбиралась") + " · соединений: " + (d.ok || 0) + ", ошибок: " + (d.fail || 0);
   }
   let dpiPolling = false;
   async function pollDpi() {
@@ -999,6 +999,22 @@
       p.present ? h("button", { class: "switch" + (p.enabled ? " on" : ""), "aria-label": "Включить", onclick: () => Bridge.act("corePlugin", { id: p.id, op: "enable", value: !p.enabled }) }) : null,
       p.present ? h("button", { class: "icon-btn", "aria-label": "Удалить", onclick: () => Bridge.act("corePlugin", { id: p.id, op: "delete" }) }, icon("del"))
         : (p.id === "xray" ? h("button", { class: "btn tonal sm", onclick: async () => { snack("Скачиваю Xray…"); const r = await Bridge.act("corePlugin", { id: "xray", op: "restore" }); if (r && r.error) snack(r.error); } }, icon("download"), "Скачать") : null)));
+  }
+
+  function openIconSheet() {
+    openLive(() => {
+      const I = S.appIcon || { current: "default", variants: [] };
+      const swatch = { default: "linear-gradient(135deg,#5a3cf4,#14d2e6)", dark: "#0f1115", light: "#f3f1ff", you: "#6750a4", youlight: "#e9ddff" };
+      const rows = I.variants.map((v) => h("div", { class: "row", onclick: () => Bridge.act("setIcon", v.id) },
+        h("div", { style: "width:40px;height:40px;border-radius:12px;flex:none;background:" + (swatch[v.id] || "#888") }),
+        h("div", { class: "grow" }, h("div", { class: "t" }, v.name), h("div", { class: "s" }, v.note)),
+        h("div", { class: "t" }, I.current === v.id ? "✓" : "")));
+      return h("div", {}, h("h2", {}, "Иконка приложения"),
+        h("div", { class: "body" }, "На Android 13+ включите «Тематические значки» в настройках обоев и стиля: значок перекрасится под цвета обоев. Монохромный слой есть у всех вариантов. Смена значка может занять несколько секунд."),
+        h("div", { class: "list" }, rows),
+        h("div", { class: "actions" }, h("button", { class: "btn tonal", onclick: async () => { const r = await Bridge.act("pickIcon"); if (r && r.cancel) return; snack(r && r.error ? r.error : "Подтвердите добавление значка на главный экран"); } }, icon("add"), "Своя картинка")),
+        h("div", { class: "body" }, "Своя картинка добавляется ярлыком на главный экран: заменить штатный значок произвольным изображением Android не позволяет."));
+    });
   }
 
   function openPlugins() {
@@ -1101,7 +1117,7 @@
   let noticeShown = false;
   function openNotice() {
     noticeShown = true;
-    openSheet(h("div", {}, h("h2", {}, "Версия 2.0"), h("div", { class: "body" }, "Старый интерфейс (Compose) удалён. Приложение работает на новом интерфейсе, его скорость и работа с большими списками серверов улучшены."),
+    openSheet(h("div", {}, h("h2", {}, "Версия 2.1"), h("div", { class: "body" }, "Свой значок и перекраска под Material You, ядра Xray и sing-box как плагины, бесплатный сервер обхода DPI с подбором стратегии под вашего оператора."),
       h("div", { class: "actions" }, h("button", { class: "btn filled", onclick: () => { closeSheet(); Bridge.act("noticeSeen"); } }, "Понятно"))));
   }
   let shownUpdate = "";
@@ -1380,6 +1396,8 @@
       group("Клиент для подписок",
         seg("mask", ["Tunn", "Happ", "v2RayTun", "Incy"], "Под кого маскироваться"),
         action("HWID", "Идентификатор устройства: показать, копировать, сбросить", hwidSheet)),
+      group("Иконка",
+        action("Иконка приложения", "Варианты, Material You и своя картинка", openIconSheet)),
       group("Плагины",
         action("Плагины", "Протоколы, правила обхода, дополнения интерфейса", openPlugins)),
       group("Проверка пинга",
@@ -1404,7 +1422,7 @@
     const dev = (name, role, url) => h("button", { class: "dev", onclick: () => Bridge.act("open", url) },
       h("div", { class: "avatar" }, Array.from(name)[0].toUpperCase()),
       h("div", { class: "grow" }, h("div", { class: "t" }, name), role ? h("div", { class: "s" }, role) : null));
-    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 2.0 · создатель fasdeq13"),
+    v.append(h("div", { class: "about" }, h("div", { class: "title-large" }, "Tunn"), h("div", { class: "body" }, "Версия 2.1 · создатель fasdeq13"),
       h("div", { class: "group-title tight" }, h("span", {}, "Участники")),
       h("div", { class: "devs" }, dev("Fasdeq13", "Создатель", "https://github.com/Fasdeq13/FasdeqVPN"), dev("fezix64", "", "https://github.com/fezix64"))));
   }

@@ -168,10 +168,22 @@ object Doh {
     private val cache = ConcurrentHashMap<String, Pair<String, Long>>()
     private val literal = Regex("^[0-9.]+$|^[0-9a-fA-F]*:[0-9a-fA-F:]+$")
 
+    private fun usable(a: InetAddress): Boolean =
+        a.address.size == 4 && !a.isLoopbackAddress && !a.isAnyLocalAddress && !a.isSiteLocalAddress && !a.isLinkLocalAddress
+
     fun resolve(host: String): String? {
         if (literal.matches(host)) return host
         val hit = cache[host]
         if (hit != null && System.currentTimeMillis() - hit.second < 600_000L) return hit.first
+        val sys = try {
+            InetAddress.getAllByName(host).firstOrNull { usable(it) }?.hostAddress
+        } catch (e: Exception) {
+            null
+        }
+        if (sys != null) {
+            cache[host] = sys to System.currentTimeMillis()
+            return sys
+        }
         for (base in listOf("https://1.1.1.1/dns-query", "https://8.8.8.8/resolve")) {
             val ip = try {
                 query(base, host)
@@ -183,13 +195,7 @@ object Doh {
                 return ip
             }
         }
-        return try {
-            InetAddress.getAllByName(host).firstOrNull { it.address.size == 4 }?.hostAddress?.also {
-                cache[host] = it to System.currentTimeMillis()
-            }
-        } catch (e: Exception) {
-            null
-        }
+        return null
     }
 
     private fun query(base: String, host: String): String? {
@@ -397,6 +403,12 @@ object Dpi {
         if (o.optString("state") == "searching" && System.currentTimeMillis() - o.optLong("at") > 120_000L) o.put("state", "idle")
         val cur = chosen(c)
         o.put("strategy", cur?.title ?: "")
+        try {
+            val live = JSONObject(File(c.filesDir, "dpi_live.json").readText())
+            o.put("ok", live.optInt("ok")).put("fail", live.optInt("fail"))
+        } catch (e: Exception) {
+            o.put("ok", 0).put("fail", 0)
+        }
         return o
     }
 }
@@ -546,10 +558,25 @@ object DpiProxy {
         }
     }
 
+    private fun half(s: Socket) {
+        try {
+            s.shutdownOutput()
+        } catch (e: Exception) {
+        }
+    }
+
     fun relay(a: Socket, b: Socket) {
-        val t = Thread { pipe(b.getInputStream(), a.getOutputStream()); close(a); close(b) }
+        val t = Thread {
+            pipe(b.getInputStream(), a.getOutputStream())
+            half(a)
+        }
         t.start()
         pipe(a.getInputStream(), b.getOutputStream())
+        half(b)
+        try {
+            t.join(60000)
+        } catch (e: Exception) {
+        }
         close(a)
         close(b)
     }
@@ -598,10 +625,58 @@ object DpiProxy {
         }
     }
 
+    private val winners = ConcurrentHashMap<String, String>()
+    @Volatile private var okCount = 0
+    @Volatile private var failCount = 0
+    @Volatile private var noteAt = 0L
+
+    private fun note(ok: Boolean) {
+        if (ok) okCount++ else failCount++
+        val now = System.currentTimeMillis()
+        val c = ctx ?: return
+        if (now - noteAt < 2000L) return
+        noteAt = now
+        try {
+            File(c.filesDir, "dpi_live.json").writeText(JSONObject().put("ok", okCount).put("fail", failCount).put("at", now).toString())
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun open(ip: String, port: Int): Socket? {
+        val s = Socket()
+        return try {
+            s.connect(InetSocketAddress(ip, port), 6000)
+            s.tcpNoDelay = true
+            s
+        } catch (e: Exception) {
+            close(s)
+            null
+        }
+    }
+
+    private fun exchange(s: Socket, data: ByteArray, st: Strategy): ByteArray? {
+        return try {
+            if (st.id == "direct") {
+                s.getOutputStream().write(data)
+                s.getOutputStream().flush()
+            } else {
+                Desync.send(s, data, st, ctx?.cacheDir ?: File("/data/local/tmp"))
+            }
+            s.soTimeout = 4500
+            val buf = ByteArray(16384)
+            val n = s.getInputStream().read(buf)
+            s.soTimeout = 0
+            if (n > 0) buf.copyOf(n) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun connect(client: Socket, host: String, port: Int) {
         val o = client.getOutputStream()
         val ip = Doh.resolve(host)
         if (ip == null) {
+            note(false)
             reply(o, 4)
             return close(client)
         }
@@ -610,15 +685,12 @@ object DpiProxy {
             TgWs.bridge(client, ip, port)
             return
         }
-        val remote = Socket()
-        try {
-            remote.connect(InetSocketAddress(ip, port), 7000)
-        } catch (e: Exception) {
+        val first = open(ip, port)
+        if (first == null) {
+            note(false)
             reply(o, 5)
-            close(remote)
             return close(client)
         }
-        remote.tcpNoDelay = true
         reply(o, 0)
         val buf = ByteArray(8192)
         val n = try {
@@ -629,23 +701,58 @@ object DpiProxy {
         }
         client.soTimeout = 0
         if (n <= 0) {
-            close(remote)
+            close(first)
             return close(client)
         }
         val data = buf.copyOf(n)
-        try {
-            if ((port == 443 || port == 80) && (TlsHello.isTls(data) || data[0] == 'G'.code.toByte() || data[0] == 'P'.code.toByte())) {
-                Desync.send(remote, data, strategy(), ctx?.cacheDir ?: File("/data/local/tmp"))
-            } else {
-                remote.getOutputStream().write(data)
-                remote.getOutputStream().flush()
+        val tls = port == 443 && TlsHello.isTls(data)
+        val http = port == 80 && (data[0] == 'G'.code.toByte() || data[0] == 'H'.code.toByte())
+        if (!tls) {
+            try {
+                if (http) {
+                    Desync.send(first, data, strategy(), ctx?.cacheDir ?: File("/data/local/tmp"))
+                } else {
+                    first.getOutputStream().write(data)
+                    first.getOutputStream().flush()
+                }
+            } catch (e: Exception) {
+                close(first)
+                note(false)
+                return close(client)
             }
-        } catch (e: Exception) {
-            close(remote)
-            return close(client)
+            first.soTimeout = 0
+            note(true)
+            relay(client, first)
+            return
         }
-        remote.soTimeout = 0
-        relay(client, remote)
+        val key = "$host:$port"
+        val order = ArrayList<Strategy>()
+        winners[key]?.let { Dpi.byId(it) }?.let { order.add(it) }
+        order.add(strategy())
+        order.add(Dpi.strategies[0])
+        order.addAll(Dpi.strategies.drop(1))
+        var sock: Socket? = first
+        for (st in order.distinctBy { it.id }.take(4)) {
+            val s = sock ?: open(ip, port) ?: continue
+            sock = null
+            val resp = exchange(s, data, st)
+            if (resp != null) {
+                winners[key] = st.id
+                note(true)
+                try {
+                    client.getOutputStream().write(resp)
+                    client.getOutputStream().flush()
+                } catch (e: Exception) {
+                    close(s)
+                    return close(client)
+                }
+                relay(client, s)
+                return
+            }
+            close(s)
+        }
+        note(false)
+        close(client)
     }
 
     private fun udp(client: Socket) {

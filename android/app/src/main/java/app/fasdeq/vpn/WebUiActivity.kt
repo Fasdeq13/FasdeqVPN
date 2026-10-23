@@ -69,6 +69,19 @@ class WebUiActivity : ComponentActivity() {
         pluginPicker.launch(arrayOf("*/*"))
     }
 
+    private var imagePicked: ((Uri?) -> Unit)? = null
+
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val f = imagePicked
+        imagePicked = null
+        f?.invoke(uri)
+    }
+
+    fun pickImage(done: (Uri?) -> Unit) {
+        imagePicked = done
+        imagePicker.launch(arrayOf("image/*"))
+    }
+
     fun pickCore(done: (Uri?) -> Unit) {
         corePicked = done
         corePicker.launch(arrayOf("*/*"))

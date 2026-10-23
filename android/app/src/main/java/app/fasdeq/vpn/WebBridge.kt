@@ -236,6 +236,21 @@ class WebBridge(private val host: WebUiActivity) {
                 push()
             }
             "dpiStatus" -> reply(id, Dpi.status(host))
+            "setIcon" -> {
+                AppIcon.set(host, text)
+                reply(id)
+                push()
+            }
+            "pickIcon" -> host.pickImage { uri ->
+                if (uri == null) {
+                    reply(id, JSONObject().put("cancel", true))
+                } else {
+                    host.lifecycleScope.launch {
+                        val error = withContext(Dispatchers.IO) { AppIcon.pinCustom(host, uri) }
+                        reply(id, if (error != null) JSONObject().put("error", error) else JSONObject())
+                    }
+                }
+            }
             "pluginEnable" -> {
                 val o = value as JSONObject
                 Plugins.setEnabled(host, o.getString("key"), o.getBoolean("value"))
@@ -340,7 +355,7 @@ class WebBridge(private val host: WebUiActivity) {
                 reply(id)
             }
             "noticeSeen" -> {
-                prefs.edit().putBoolean("notice20", true).apply()
+                prefs.edit().putBoolean("notice21", true).apply()
                 reply(id)
             }
             "haptic" -> {
@@ -523,7 +538,7 @@ class WebBridge(private val host: WebUiActivity) {
         settings.put("checkInterval", st.checkInterval.toDouble())
         o.put("settings", settings)
         o.put("plugins", plugins())
-        o.put("notice", !prefs.getBoolean("notice20", false))
+        o.put("notice", !prefs.getBoolean("notice21", false))
 
         val checks = JSONObject()
         for (s in st.servers) {
@@ -559,6 +574,7 @@ class WebBridge(private val host: WebUiActivity) {
         )
 
         o.put("corePlugins", CorePlugins.snapshot(host))
+        o.put("appIcon", AppIcon.snapshot(host))
 
         val up = Updates.state
         o.put(

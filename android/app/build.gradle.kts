@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (project.findProperty("app.vcode") as String?)?.toInt() ?: 20
-        versionName = (project.findProperty("app.vname") as String?) ?: "2.0"
+        versionName = (project.findProperty("app.vname") as String?) ?: "2.1"
         manifestPlaceholders["appLabel"] = (project.findProperty("app.label") as String?) ?: "Tunn"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")

@@ -2,9 +2,12 @@ package app.fasdeq.vpn
 
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
+import java.io.FilterOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketAddress
 import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
@@ -13,6 +16,66 @@ import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
+
+private class FragOutput(private val real: OutputStream) : FilterOutputStream(real) {
+    @Volatile private var armed = true
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        if (!armed || !TlsHello.isTls(b.copyOfRange(off, off + len))) {
+            armed = false
+            real.write(b, off, len)
+            real.flush()
+            return
+        }
+        armed = false
+        val data = b.copyOfRange(off, off + len)
+        val sni = TlsHello.sni(data)
+        val record = if (sni != null) TlsHello.splitRecord(data, sni.first + 1) else data
+        val cuts = (if (sni != null) listOf(sni.first + 1, (sni.first + sni.last) / 2) else listOf(record.size / 2))
+            .filter { it in 1 until record.size }.distinct().sorted()
+        var prev = 0
+        for (cut in cuts + record.size) {
+            real.write(record, prev, cut - prev)
+            real.flush()
+            if (prev == 0) {
+                try {
+                    Thread.sleep(6)
+                } catch (e: InterruptedException) {
+                }
+            }
+            prev = cut
+        }
+    }
+
+    override fun write(b: Int) {
+        armed = false
+        real.write(b)
+    }
+}
+
+private class FragSocket(private val raw: Socket) : Socket() {
+    private val out by lazy { FragOutput(raw.getOutputStream()) }
+    override fun getInputStream(): InputStream = raw.getInputStream()
+    override fun getOutputStream(): OutputStream = out
+    override fun isConnected(): Boolean = raw.isConnected
+    override fun isClosed(): Boolean = raw.isClosed
+    override fun isBound(): Boolean = raw.isBound
+    override fun close() = raw.close()
+    override fun getInetAddress() = raw.inetAddress
+    override fun getLocalAddress() = raw.localAddress
+    override fun getPort() = raw.port
+    override fun getLocalPort() = raw.localPort
+    override fun getRemoteSocketAddress(): SocketAddress = raw.remoteSocketAddress
+    override fun getLocalSocketAddress(): SocketAddress = raw.localSocketAddress
+    override fun setSoTimeout(timeout: Int) = raw.setSoTimeout(timeout)
+    override fun getSoTimeout(): Int = raw.soTimeout
+    override fun setTcpNoDelay(on: Boolean) = raw.setTcpNoDelay(on)
+    override fun getTcpNoDelay(): Boolean = raw.tcpNoDelay
+    override fun shutdownInput() = raw.shutdownInput()
+    override fun shutdownOutput() = raw.shutdownOutput()
+    override fun isInputShutdown(): Boolean = raw.isInputShutdown
+    override fun isOutputShutdown(): Boolean = raw.isOutputShutdown
+}
 
 class WsLink(private val ssl: SSLSocket) {
     private val inp = BufferedInputStream(ssl.getInputStream())
@@ -124,18 +187,38 @@ object TgWs {
         }
     }
 
+    private fun domains(dc: Int): List<String> {
+        val mine = listOf("kws$dc.web.telegram.org", "kws$dc-1.web.telegram.org")
+        val others = (1..5).filter { it != dc }.flatMap { listOf("kws$it.web.telegram.org", "kws$it-1.web.telegram.org") }
+        return mine + others.shuffled()
+    }
+
+    private fun handshake(raw: Socket, domain: String, ip: String, fragment: Boolean): SSLSocket {
+        val carrier: Socket = if (fragment) FragSocket(raw) else raw
+        val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(carrier, domain, 443, true) as SSLSocket
+        ssl.soTimeout = 8000
+        ssl.startHandshake()
+        if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(domain, ssl.session)) throw java.io.IOException("ssl host mismatch")
+        return ssl
+    }
+
     private fun open(dc: Int): WsLink? {
-        for (domain in listOf("kws$dc.web.telegram.org", "kws$dc-1.web.telegram.org")) {
+        for (domain in domains(dc)) {
             val ip = Doh.resolve(domain) ?: fallback[dc] ?: continue
-            val raw = Socket()
+            var ssl: SSLSocket? = null
             try {
-                raw.connect(InetSocketAddress(ip, 443), 5000)
-                val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(raw, domain, 443, true) as SSLSocket
-                ssl.soTimeout = 8000
-                ssl.startHandshake()
-                if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(domain, ssl.session)) {
-                    ssl.close()
-                    continue
+                val raw1 = Socket()
+                raw1.connect(InetSocketAddress(ip, 443), 5000)
+                ssl = try {
+                    handshake(raw1, domain, ip, fragment = false)
+                } catch (e: Exception) {
+                    try {
+                        raw1.close()
+                    } catch (x: Exception) {
+                    }
+                    val raw2 = Socket()
+                    raw2.connect(InetSocketAddress(ip, 443), 5000)
+                    handshake(raw2, domain, ip, fragment = true)
                 }
                 val key = ByteArray(16).also { SecureRandom().nextBytes(it) }
                 val req = "GET /apiws HTTP/1.1\r\nHost: $domain\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
@@ -158,7 +241,7 @@ object TgWs {
                 return WsLink(ssl)
             } catch (e: Exception) {
                 try {
-                    raw.close()
+                    ssl?.close()
                 } catch (x: Exception) {
                 }
             }
